@@ -1,0 +1,2110 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CTR 预估模型演进全景 — 从 LR 到 DHEN/LHUC</title>
+<style>
+  :root {
+    --bg: #08080d;
+    --card: #101018;
+    --border: #1a1a2a;
+    --gold: #fdcb6e;
+    --gold2: #e17055;
+    --purple: #6c5ce7;
+    --cyan: #00cec9;
+    --pink: #fd79a8;
+    --blue: #74b9ff;
+    --green: #55efc4;
+    --text: #dddde4;
+    --text2: #7e7e98;
+    --text3: #55556a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg); color: var(--text); line-height:1.8; overflow-x:hidden;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    position:relative; overflow:hidden;
+  }
+  .hero::before {
+    content:''; position:absolute; inset:0;
+    background:
+      radial-gradient(ellipse 500px 400px at 15% 25%, rgba(253,203,110,.12), transparent),
+      radial-gradient(ellipse 450px 350px at 85% 55%, rgba(0,206,201,.1), transparent),
+      radial-gradient(ellipse 400px 300px at 50% 80%, rgba(108,92,231,.1), transparent),
+      radial-gradient(ellipse 350px 250px at 65% 20%, rgba(253,121,168,.07), transparent);
+    animation: heroDrift 18s ease-in-out infinite alternate;
+  }
+  @keyframes heroDrift { 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(15px,-12px) scale(1.04)} }
+  .hero-inner { position:relative; z-index:1; max-width:960px; text-align:center; padding:2rem; }
+  .hero-badge {
+    display:inline-block; padding:.3rem .9rem; border-radius:999px;
+    background:rgba(253,203,110,.1); border:1px solid rgba(253,203,110,.25);
+    color:var(--gold); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
+    margin-bottom:1.2rem;
+  }
+  .hero h1 {
+    font-size:clamp(2rem,5vw,3.2rem); font-weight:800;
+    background:linear-gradient(135deg, #fdcb6e, #6c5ce7, #00cec9, #fd79a8);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    line-height:1.25; margin-bottom:.8rem;
+  }
+  .hero .subtitle { font-size:clamp(.9rem,2vw,1.12rem); color:var(--text2); max-width:740px; margin:0 auto; }
+  .hero-meta {
+    display:flex; gap:2rem; justify-content:center; flex-wrap:wrap; margin-top:2rem;
+  }
+  .hero-meta .item { text-align:center; }
+  .hero-meta .val { font-size:1.5rem; font-weight:700; color:var(--gold); }
+  .hero-meta .lbl { font-size:.76rem; color:var(--text2); }
+  .scroll-arrow {
+    position:absolute; bottom:2rem; left:50%; transform:translateX(-50%);
+    animation: bounce 2s infinite; z-index:1;
+  }
+  @keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0);opacity:.5} 50%{transform:translateX(-50%) translateY(10px);opacity:1} }
+  .scroll-arrow svg { width:26px; height:26px; stroke:var(--text3); fill:none; stroke-width:2; }
+
+  /* ── Nav ── */
+  .nav {
+    position:sticky; top:0; z-index:100;
+    background:rgba(8,8,13,.88); backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    display:flex; justify-content:center; gap:.5rem; padding:.65rem 1rem; flex-wrap:wrap;
+  }
+  .nav a {
+    padding:.3rem .7rem; border-radius:999px;
+    border:1px solid var(--border); background:transparent;
+    color:var(--text2); font-size:.72rem; text-decoration:none; transition:.3s;
+    white-space:nowrap;
+  }
+  .nav a:hover { border-color:var(--gold); color:#fff; background:rgba(253,203,110,.08); }
+
+  /* ── Section ── */
+  .section { max-width:1100px; margin:0 auto; padding:4rem 1.5rem 2rem; }
+  .section-header { display:flex; align-items:center; gap:.8rem; margin-bottom:2rem; }
+  .section-num {
+    width:40px; height:40px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.05rem; font-weight:800; color:#000; flex-shrink:0;
+  }
+  .sn-gold   { background:linear-gradient(135deg, var(--gold), var(--gold2)); }
+  .sn-purple { background:linear-gradient(135deg, var(--purple), #a29bfe); }
+  .sn-cyan   { background:linear-gradient(135deg, var(--cyan), #0984e3); }
+  .sn-pink   { background:linear-gradient(135deg, var(--pink), #e84393); }
+  .sn-blue   { background:linear-gradient(135deg, var(--blue), #0984e3); }
+  .sn-green  { background:linear-gradient(135deg, var(--green), #00b894); }
+  .section-title { font-size:1.45rem; font-weight:700; color:#fff; }
+
+  /* ── Row (left vis, right txt) ── */
+  .row {
+    display:grid; grid-template-columns:1fr 1fr; gap:0;
+    margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .row.visible { opacity:1; transform:translateY(0); }
+  .row .vis {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px 0 0 16px; padding:1.8rem;
+    display:flex; align-items:center; justify-content:center; min-height:320px;
+  }
+  .row .txt {
+    background:var(--card); border:1px solid var(--border); border-left:none;
+    border-radius:0 16px 16px 0; padding:1.8rem 2rem;
+    display:flex; flex-direction:column; justify-content:center;
+  }
+  @media(max-width:860px){
+    .row { grid-template-columns:1fr; }
+    .row .vis { border-radius:16px 16px 0 0; min-height:250px; }
+    .row .txt { border-radius:0 0 16px 16px; border-left:1px solid var(--border); border-top:none; }
+  }
+  .row .vis svg { width:100%; max-width:440px; height:auto; }
+  .row .txt h3 { font-size:1.08rem; font-weight:700; margin-bottom:.5rem; }
+  .h-gold { color:var(--gold); }
+  .h-purple { color:var(--purple); }
+  .h-cyan { color:var(--cyan); }
+  .h-pink { color:var(--pink); }
+  .h-blue { color:var(--blue); }
+  .h-green { color:var(--green); }
+  .row .txt p { font-size:.86rem; color:var(--text2); margin-bottom:.65rem; }
+  .row .txt .formula {
+    font-family:'Courier New',monospace; font-size:.88rem;
+    padding:.6rem 1rem; border-radius:8px;
+    background:rgba(253,203,110,.04); border:1px solid rgba(253,203,110,.12);
+    color:var(--gold); margin:.5rem 0; word-break:break-all;
+  }
+  .formula-purple { background:rgba(108,92,231,.04)!important; border-color:rgba(108,92,231,.15)!important; color:var(--purple)!important; }
+  .formula-cyan { background:rgba(0,206,201,.04)!important; border-color:rgba(0,206,201,.15)!important; color:var(--cyan)!important; }
+  .formula-pink { background:rgba(253,121,168,.04)!important; border-color:rgba(253,121,168,.15)!important; color:var(--pink)!important; }
+  .formula-blue { background:rgba(116,185,255,.04)!important; border-color:rgba(116,185,255,.15)!important; color:var(--blue)!important; }
+  .formula-green { background:rgba(85,239,196,.04)!important; border-color:rgba(85,239,196,.15)!important; color:var(--green)!important; }
+  .row .txt .key {
+    font-size:.83rem; padding:.65rem 1rem;
+    border-left:3px solid var(--purple); border-radius:0 8px 8px 0;
+    color:var(--text); line-height:1.7;
+  }
+  .key-gold   { background:rgba(253,203,110,.05); border-left-color:var(--gold)!important; }
+  .key-purple { background:rgba(108,92,231,.05); border-left-color:var(--purple)!important; }
+  .key-cyan   { background:rgba(0,206,201,.05); border-left-color:var(--cyan)!important; }
+  .key-pink   { background:rgba(253,121,168,.05); border-left-color:var(--pink)!important; }
+  .key-blue   { background:rgba(116,185,255,.05); border-left-color:var(--blue)!important; }
+  .key-green  { background:rgba(85,239,196,.05); border-left-color:var(--green)!important; }
+  .row .txt .tags { display:flex; flex-wrap:wrap; gap:.35rem; margin:.5rem 0; }
+  .row .txt .tags span {
+    font-size:.68rem; padding:.18rem .5rem; border-radius:5px;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--text);
+  }
+
+  /* ── Wide card ── */
+  .wide-card {
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:2rem; margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .wide-card.visible { opacity:1; transform:translateY(0); }
+  .wide-card h3 { font-size:1.12rem; font-weight:700; color:var(--gold); margin-bottom:1rem; }
+  .wide-card p { font-size:.86rem; color:var(--text2); margin-bottom:.8rem; }
+
+  /* ── Table ── */
+  .cmp-table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:.78rem; }
+  .cmp-table th {
+    text-align:left; padding:.55rem .6rem;
+    color:var(--gold); border-bottom:1px solid var(--border);
+    background:rgba(253,203,110,.04); white-space:nowrap;
+  }
+  .cmp-table td {
+    padding:.45rem .6rem; color:var(--text2);
+    border-bottom:1px solid rgba(255,255,255,.03);
+  }
+  .cmp-table tr:hover td { background:rgba(255,255,255,.02); }
+  .cmp-table .overflow-wrap { overflow-x:auto; }
+
+  /* ── Timeline ── */
+  .timeline-wrap {
+    position:relative; padding-left:30px; margin:1.5rem 0;
+  }
+  .timeline-wrap::before {
+    content:''; position:absolute; left:8px; top:0; bottom:0; width:2px;
+    background:linear-gradient(to bottom, var(--gold), var(--purple), var(--cyan), var(--pink), var(--green));
+    opacity:.3;
+  }
+  .tl-item {
+    position:relative; margin-bottom:1.2rem; padding-left:1rem;
+  }
+  .tl-item::before {
+    content:''; position:absolute; left:-26px; top:6px;
+    width:10px; height:10px; border-radius:50%;
+    background:var(--gold); border:2px solid var(--bg);
+  }
+  .tl-year { font-size:.76rem; font-weight:700; }
+  .tl-text { font-size:.82rem; color:var(--text2); }
+
+  /* ── Footer ── */
+  footer {
+    text-align:center; padding:3rem 1rem; color:var(--text3);
+    font-size:.78rem; border-top:1px solid var(--border);
+  }
+  footer a { color:var(--gold); text-decoration:none; }
+</style>
+</head>
+<body>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     HERO
+     ════════════════════════════════════════════════════════════════════ -->
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <div class="hero-badge">Deep Dive &middot; Full Panorama</div>
+    <h1>CTR 预估模型演进全景</h1>
+    <p class="subtitle">从 Logistic Regression 到 DHEN / LHUC：15 个里程碑模型的完整演进脉络<br>特征交互建模 &times; 模型个性化适配 的双轴演进</p>
+    <div class="hero-meta">
+      <div class="item"><div class="val">15</div><div class="lbl">里程碑模型</div></div>
+      <div class="item"><div class="val">2007-2022</div><div class="lbl">时间跨度</div></div>
+      <div class="item"><div class="val">2</div><div class="lbl">演进主轴</div></div>
+      <div class="item"><div class="val">6</div><div class="lbl">公司贡献</div></div>
+    </div>
+  </div>
+  <div class="scroll-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></div>
+</section>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     NAV
+     ════════════════════════════════════════════════════════════════════ -->
+<nav class="nav">
+  <a href="#glossary">核心运算</a>
+  <a href="#lr">LR</a>
+  <a href="#poly2">POLY2</a>
+  <a href="#fm">FM</a>
+  <a href="#ffm">FFM</a>
+  <a href="#widedeep">Wide&Deep</a>
+  <a href="#deepfm">DeepFM</a>
+  <a href="#dcn">DCN</a>
+  <a href="#xdeepfm">xDeepFM</a>
+  <a href="#dcnv2">DCN-V2</a>
+  <a href="#autoint">AutoInt</a>
+  <a href="#fibinet">FiBiNET</a>
+  <a href="#dlrm">DLRM</a>
+  <a href="#mmcn">MMCN</a>
+  <a href="#dhen">DHEN</a>
+  <a href="#lhuc">LHUC</a>
+  <a href="#axes">演进双轴</a>
+  <a href="#timeline">时间线</a>
+  <a href="#compare">全面对比</a>
+</nav>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     0. GLOSSARY — 核心运算
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="glossary">
+  <div class="section-header">
+    <div class="section-num" style="background:linear-gradient(135deg,#a29bfe,#6c5ce7);">0</div>
+    <div class="section-title">前置概念：四种核心运算</div>
+  </div>
+
+  <!-- ─── Inner Product ─── -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 310" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">内积 (Inner Product / Dot Product)</text>
+        <!-- Two input vectors -->
+        <g transform="translate(30,50)">
+          <text x="0" y="12" fill="#fdcb6e" font-size="10" font-weight="bold">向量 a</text>
+          <rect x="0" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="22" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">1</text>
+          <rect x="55" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="77" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">2</text>
+          <rect x="110" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="132" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">3</text>
+        </g>
+        <g transform="translate(30,105)">
+          <text x="0" y="12" fill="#6c5ce7" font-size="10" font-weight="bold">向量 b</text>
+          <rect x="0" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="22" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">4</text>
+          <rect x="55" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="77" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">5</text>
+          <rect x="110" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="132" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">6</text>
+        </g>
+        <!-- Computation -->
+        <g transform="translate(220,55)">
+          <text x="0" y="0" fill="#fff" font-size="11" font-weight="bold">计算过程</text>
+          <text x="0" y="25" fill="#fdcb6e" font-size="11">1</text><text x="12" y="25" fill="#888" font-size="11">×</text><text x="22" y="25" fill="#6c5ce7" font-size="11">4</text><text x="38" y="25" fill="#888" font-size="11">= 4</text>
+          <text x="0" y="48" fill="#fdcb6e" font-size="11">2</text><text x="12" y="48" fill="#888" font-size="11">×</text><text x="22" y="48" fill="#6c5ce7" font-size="11">5</text><text x="38" y="48" fill="#888" font-size="11">= 10</text>
+          <text x="0" y="71" fill="#fdcb6e" font-size="11">3</text><text x="12" y="71" fill="#888" font-size="11">×</text><text x="22" y="71" fill="#6c5ce7" font-size="11">6</text><text x="38" y="71" fill="#888" font-size="11">= 18</text>
+          <line x1="0" y1="78" x2="70" y2="78" stroke="#888" stroke-width="1"/>
+          <text x="0" y="95" fill="#888" font-size="11">4 + 10 + 18 =</text>
+        </g>
+        <!-- Output: scalar -->
+        <g transform="translate(295,130)">
+          <rect x="0" y="0" width="100" height="45" rx="12" fill="rgba(253,121,168,.1)" stroke="#fd79a8" stroke-width="2"/>
+          <text x="50" y="20" fill="#fd79a8" font-size="16" font-weight="bold" text-anchor="middle">32</text>
+          <text x="50" y="38" fill="#888" font-size="9" text-anchor="middle">标量 (1个数)</text>
+        </g>
+        <!-- Formula -->
+        <rect x="30" y="195" width="380" height="40" rx="8" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="220" y="220" fill="#fdcb6e" font-size="12" text-anchor="middle">⟨a, b⟩ = a₁b₁ + a₂b₂ + ... + aₖbₖ = 标量</text>
+        <!-- Used in -->
+        <g transform="translate(30,250)">
+          <rect x="0" y="0" width="380" height="45" rx="8" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="15" y="16" fill="#6c5ce7" font-size="9" font-weight="bold">用在哪些模型:</text>
+          <text x="15" y="35" fill="#888" font-size="9">FM: ⟨vᵢ,vⱼ⟩ 衡量交互强度 · DLRM: embedding 间的点积交互 · DIN: 注意力权重</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">内积 (Inner Product)</h3>
+      <p>又叫点积 (Dot Product)。两个向量<strong>对应位置相乘再求和</strong>，最终得到一个<strong style="color:var(--pink)">标量</strong>（一个数字）。</p>
+      <div class="formula">⟨a, b⟩ = Σᵢ aᵢ · bᵢ = a₁b₁ + a₂b₂ + ... + aₖbₖ</div>
+      <p><strong>直觉：</strong>衡量两个向量的<strong>相似度</strong>。方向越一致，内积越大；正交时内积为零。</p>
+      <p><strong>输入输出：</strong></p>
+      <div class="tags">
+        <span>输入: 两个 k 维向量</span>
+        <span>输出: 1 个标量</span>
+        <span>信息量: 最压缩</span>
+      </div>
+      <p><strong>代表模型：</strong></p>
+      <p>- <strong style="color:var(--gold)">FM</strong>: ⟨vᵢ, vⱼ⟩ 作为两个特征的交互权重</p>
+      <p>- <strong style="color:var(--pink)">DLRM</strong>: embedding 间的点积交互矩阵</p>
+      <div class="key key-gold">内积是最简单也最高效的交互方式。把两个 k 维向量压缩成一个数，信息损失最大，但计算最快。FM 能工作的前提就是：内积已经足够编码两个特征间的交互强度。</div>
+    </div>
+  </div>
+
+  <!-- ─── Hadamard Product ─── -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 310" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">Hadamard 积 (逐元素乘 / Element-wise Product)</text>
+        <!-- Two input vectors -->
+        <g transform="translate(30,50)">
+          <text x="0" y="12" fill="#fdcb6e" font-size="10" font-weight="bold">向量 a</text>
+          <rect x="0" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="22" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">1</text>
+          <rect x="55" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="77" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">2</text>
+          <rect x="110" y="20" width="45" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="132" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">3</text>
+        </g>
+        <g transform="translate(30,105)">
+          <text x="0" y="12" fill="#6c5ce7" font-size="10" font-weight="bold">向量 b</text>
+          <rect x="0" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="22" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">4</text>
+          <rect x="55" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="77" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">5</text>
+          <rect x="110" y="20" width="45" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="132" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">6</text>
+        </g>
+        <!-- Computation -->
+        <g transform="translate(220,55)">
+          <text x="0" y="0" fill="#fff" font-size="11" font-weight="bold">逐位相乘 (保留每一位)</text>
+          <text x="0" y="25" fill="#fdcb6e" font-size="11">1</text><text x="12" y="25" fill="#888" font-size="11">×</text><text x="22" y="25" fill="#6c5ce7" font-size="11">4</text><text x="38" y="25" fill="#888" font-size="11">=</text><text x="50" y="25" fill="#00cec9" font-size="11" font-weight="bold">4</text>
+          <text x="0" y="48" fill="#fdcb6e" font-size="11">2</text><text x="12" y="48" fill="#888" font-size="11">×</text><text x="22" y="48" fill="#6c5ce7" font-size="11">5</text><text x="38" y="48" fill="#888" font-size="11">=</text><text x="50" y="48" fill="#00cec9" font-size="11" font-weight="bold">10</text>
+          <text x="0" y="71" fill="#fdcb6e" font-size="11">3</text><text x="12" y="71" fill="#888" font-size="11">×</text><text x="22" y="71" fill="#6c5ce7" font-size="11">6</text><text x="38" y="71" fill="#888" font-size="11">=</text><text x="50" y="71" fill="#00cec9" font-size="11" font-weight="bold">18</text>
+          <text x="80" y="48" fill="#888" font-size="9">不求和!</text>
+          <text x="80" y="62" fill="#888" font-size="9">保留向量</text>
+        </g>
+        <!-- Output: vector -->
+        <g transform="translate(225,130)">
+          <rect x="0" y="0" width="170" height="45" rx="12" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width="2"/>
+          <text x="25" y="28" fill="#00cec9" font-size="14" font-weight="bold">[ 4, 10, 18 ]</text>
+          <text x="85" y="42" fill="#888" font-size="8" text-anchor="middle">向量 (k维)</text>
+        </g>
+        <!-- Formula -->
+        <rect x="30" y="195" width="380" height="40" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+        <text x="220" y="220" fill="#00cec9" font-size="12" text-anchor="middle">a ∘ b = [a₁b₁, a₂b₂, ..., aₖbₖ] = k维向量</text>
+        <!-- Relationship to inner product -->
+        <g transform="translate(30,250)">
+          <rect x="0" y="0" width="380" height="45" rx="8" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="15" y="16" fill="#fdcb6e" font-size="9" font-weight="bold">与内积的关系:</text>
+          <text x="15" y="35" fill="#888" font-size="9">内积 = Hadamard 积 + 求和。即 ⟨a,b⟩ = sum(a ∘ b)。Hadamard 保留了更多信息。</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">Hadamard 积 / 逐元素乘 (CTR 领域常说的"外积")</h3>
+      <p>两个向量<strong>对应位置相乘，不求和</strong>，保留每一维的结果，输出仍然是一个<strong style="color:var(--cyan)">k 维向量</strong>。</p>
+      <div class="formula formula-cyan">a ∘ b = [a₁b₁, a₂b₂, ..., aₖbₖ]</div>
+      <p><strong>直觉：</strong>保留了两个向量交互后的<strong>完整信息</strong>，没有像内积那样压缩成标量。每一维的交互结果都保留下来。</p>
+      <p><strong>与内积的关系：</strong></p>
+      <div class="formula">内积 = sum(Hadamard 积)<br>⟨a,b⟩ = Σ(a ∘ b) = sum([4,10,18]) = 32</div>
+      <p>所以 Hadamard 积包含的信息严格多于内积——你随时可以从 Hadamard 积求和得到内积，但反过来不行。</p>
+      <p><strong>代表模型：</strong> <strong style="color:var(--cyan)">xDeepFM 的 CIN</strong> — 在 vector 级别做 Hadamard 积，保留 field 的向量结构。</p>
+      <div class="key key-cyan"><strong>CTR 领域的术语混淆：</strong>论文中常把 Hadamard 积称为"外积"（outer product），但严格来说数学中的外积是另一种运算（见下方）。读论文时要根据上下文判断，如果输出是向量，就是 Hadamard 积。</div>
+    </div>
+  </div>
+
+  <!-- ─── Outer Product (Tensor) ─── -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 310" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">张量外积 (Outer Product / Tensor Product)</text>
+        <!-- Two input vectors -->
+        <g transform="translate(30,50)">
+          <text x="0" y="12" fill="#fdcb6e" font-size="10" font-weight="bold">向量 a (3维)</text>
+          <rect x="0" y="20" width="35" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="17" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">1</text>
+          <rect x="42" y="20" width="35" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="59" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">2</text>
+          <rect x="84" y="20" width="35" height="28" rx="6" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="101" y="38" fill="#fdcb6e" font-size="11" text-anchor="middle">3</text>
+        </g>
+        <g transform="translate(30,105)">
+          <text x="0" y="12" fill="#6c5ce7" font-size="10" font-weight="bold">向量 b (3维)</text>
+          <rect x="0" y="20" width="35" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="17" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">4</text>
+          <rect x="42" y="20" width="35" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="59" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">5</text>
+          <rect x="84" y="20" width="35" height="28" rx="6" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="101" y="38" fill="#6c5ce7" font-size="11" text-anchor="middle">6</text>
+        </g>
+        <!-- Output: matrix -->
+        <g transform="translate(185,50)">
+          <text x="90" y="0" fill="#fff" font-size="11" font-weight="bold" text-anchor="middle">a ⊗ b = k×k 矩阵</text>
+          <rect x="0" y="12" width="180" height="120" rx="10" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1.5"/>
+          <!-- Matrix header -->
+          <text x="70" y="28" fill="#6c5ce7" font-size="8" text-anchor="middle">b₁=4</text>
+          <text x="110" y="28" fill="#6c5ce7" font-size="8" text-anchor="middle">b₂=5</text>
+          <text x="150" y="28" fill="#6c5ce7" font-size="8" text-anchor="middle">b₃=6</text>
+          <!-- Row 1 -->
+          <text x="20" y="52" fill="#fdcb6e" font-size="8">a₁=1</text>
+          <text x="70" y="52" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">4</text>
+          <text x="110" y="52" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">5</text>
+          <text x="150" y="52" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">6</text>
+          <!-- Row 2 -->
+          <text x="20" y="80" fill="#fdcb6e" font-size="8">a₂=2</text>
+          <text x="70" y="80" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">8</text>
+          <text x="110" y="80" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">10</text>
+          <text x="150" y="80" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">12</text>
+          <!-- Row 3 -->
+          <text x="20" y="108" fill="#fdcb6e" font-size="8">a₃=3</text>
+          <text x="70" y="108" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">12</text>
+          <text x="110" y="108" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">15</text>
+          <text x="150" y="108" fill="#fd79a8" font-size="12" text-anchor="middle" font-weight="bold">18</text>
+          <text x="90" y="142" fill="#888" font-size="8" text-anchor="middle">(a⊗b)ᵢⱼ = aᵢ · bⱼ   共 k² 个元素</text>
+        </g>
+        <!-- Formula -->
+        <rect x="30" y="195" width="380" height="40" rx="8" fill="rgba(253,121,168,.04)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="220" y="220" fill="#fd79a8" font-size="12" text-anchor="middle">a ⊗ b = k×k 矩阵，(a⊗b)ᵢⱼ = aᵢ · bⱼ</text>
+        <!-- Used in -->
+        <g transform="translate(30,250)">
+          <rect x="0" y="0" width="380" height="45" rx="8" fill="rgba(253,121,168,.04)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="15" y="16" fill="#fd79a8" font-size="9" font-weight="bold">用在哪些模型:</text>
+          <text x="15" y="35" fill="#888" font-size="9">PNN (Product-based NN): 用外积矩阵捕获所有维度对的交互。信息最丰富但参数量 O(k²)。</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">张量外积 (Outer Product)</h3>
+      <p>数学意义上的真正外积：两个向量的每一对元素都做乘法，输出一个<strong style="color:var(--pink)">k×k 矩阵</strong>。</p>
+      <div class="formula formula-pink">(a ⊗ b)ᵢⱼ = aᵢ · bⱼ<br>3维向量 → 3×3 = 9 个元素</div>
+      <p><strong>直觉：</strong>捕获了两个向量之间<strong>所有可能的维度对组合</strong>。信息量最大，但参数量也最大。</p>
+      <p><strong>三种运算的信息量排序：</strong></p>
+      <div class="tags">
+        <span>张量外积: k²个值 (最丰富)</span>
+        <span>Hadamard 积: k个值 (中等)</span>
+        <span>内积: 1个值 (最压缩)</span>
+      </div>
+      <p><strong>代表模型：</strong> <strong style="color:var(--pink)">PNN</strong> (Product-based Neural Network) 使用外积矩阵。但由于 k² 的参数量，在工业中较少使用。</p>
+      <div class="key key-pink"><strong>实际应用较少的原因：</strong>外积产出 k×k 矩阵，参数量和计算量呈平方增长。大多数模型选择内积（FM, DLRM）或 Hadamard 积（CIN）作为折中。</div>
+    </div>
+  </div>
+
+  <!-- ─── Cross (DCN) ─── -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 310" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">交叉 (Cross) — DCN 的专属操作</text>
+        <!-- Cross operation step by step -->
+        <g transform="translate(25,50)">
+          <!-- Step 1 -->
+          <rect x="0" y="0" width="390" height="55" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="15" y="18" fill="#00cec9" font-size="10" font-weight="bold">Step 1: 内积 → 标量</text>
+          <text x="15" y="40" fill="#888" font-size="10">s = xₗᵀ · w = 内积，得到一个标量 s</text>
+          <rect x="300" y="15" width="70" height="25" rx="12" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="335" y="32" fill="#fdcb6e" font-size="9" text-anchor="middle">s = 标量</text>
+        </g>
+        <g transform="translate(25,118)">
+          <!-- Step 2 -->
+          <rect x="0" y="0" width="390" height="55" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="15" y="18" fill="#00cec9" font-size="10" font-weight="bold">Step 2: 缩放原始输入</text>
+          <text x="15" y="40" fill="#888" font-size="10">x₀ · s = 用标量 s 缩放原始特征向量 x₀</text>
+          <rect x="300" y="15" width="70" height="25" rx="12" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width="1"/>
+          <text x="335" y="32" fill="#00cec9" font-size="9" text-anchor="middle">d维向量</text>
+        </g>
+        <g transform="translate(25,186)">
+          <!-- Step 3 -->
+          <rect x="0" y="0" width="390" height="55" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="15" y="18" fill="#00cec9" font-size="10" font-weight="bold">Step 3: 残差连接</text>
+          <text x="15" y="40" fill="#888" font-size="10">xₗ₊₁ = x₀ · (xₗᵀw) + b + xₗ</text>
+          <rect x="300" y="15" width="70" height="25" rx="12" fill="rgba(108,92,231,.1)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="335" y="32" fill="#6c5ce7" font-size="9" text-anchor="middle">d维向量</text>
+        </g>
+        <!-- Formula -->
+        <rect x="25" y="255" width="390" height="40" rx="8" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1.5"/>
+        <text x="220" y="280" fill="#00cec9" font-size="12" text-anchor="middle" font-weight="bold">xₗ₊₁ = x₀ · (xₗᵀ · w) + b + xₗ</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">交叉 (Cross) — DCN 专属</h3>
+      <p>交叉操作是 DCN 提出的独特运算，既不是内积也不是外积，而是一种<strong>用内积结果缩放原始输入</strong>的操作。</p>
+      <div class="formula formula-cyan">xₗ₊₁ = x₀ · (xₗᵀ · w) + b + xₗ</div>
+      <p>拆解为三步：</p>
+      <p>1. <strong style="color:var(--gold)">xₗᵀ · w</strong> → 当前层与参数做内积，得到一个标量</p>
+      <p>2. <strong style="color:var(--cyan)">x₀ · 标量</strong> → 用标量缩放原始输入 x₀</p>
+      <p>3. <strong style="color:var(--purple)">+ xₗ</strong> → 加上当前层（残差连接）</p>
+      <p><strong>关键特性：</strong></p>
+      <div class="tags">
+        <span>输入输出维度相同 (d维→d维)</span>
+        <span>每层只需 O(d) 参数</span>
+        <span>每多一层，交互阶数 +1</span>
+      </div>
+      <p><strong>代表模型：</strong> DCN, DCN-V2, MMCN</p>
+      <div class="key key-cyan"><strong>交叉的精妙之处：</strong>用极少的参数（每层只要 d 个）实现了显式的高阶特征交互。L 层 Cross Network = (L+1) 阶交互，参数量只有 O(d·L)，远少于 DNN 的 O(d²·L)。</div>
+    </div>
+  </div>
+
+  <!-- ─── Summary comparison ─── -->
+  <div class="wide-card">
+    <h3 style="color:var(--purple)">四种运算一览对比</h3>
+    <table class="cmp-table">
+      <tr>
+        <th>运算</th>
+        <th>公式</th>
+        <th>输入</th>
+        <th>输出</th>
+        <th>信息量</th>
+        <th>代表模型</th>
+        <th>计算量</th>
+      </tr>
+      <tr>
+        <td style="color:var(--gold);font-weight:600">内积</td>
+        <td>Σ aᵢbᵢ</td>
+        <td>两个 k 维向量</td>
+        <td style="color:var(--gold)">1 个标量</td>
+        <td>最压缩</td>
+        <td>FM, DLRM, DIN</td>
+        <td>O(k)</td>
+      </tr>
+      <tr>
+        <td style="color:var(--cyan);font-weight:600">Hadamard 积</td>
+        <td>[aᵢbᵢ, ...]</td>
+        <td>两个 k 维向量</td>
+        <td style="color:var(--cyan)">k 维向量</td>
+        <td>中等</td>
+        <td>xDeepFM (CIN)</td>
+        <td>O(k)</td>
+      </tr>
+      <tr>
+        <td style="color:var(--pink);font-weight:600">张量外积</td>
+        <td>aᵢbⱼ (矩阵)</td>
+        <td>两个 k 维向量</td>
+        <td style="color:var(--pink)">k×k 矩阵</td>
+        <td>最丰富</td>
+        <td>PNN</td>
+        <td>O(k²)</td>
+      </tr>
+      <tr>
+        <td style="color:var(--cyan);font-weight:600">交叉 (Cross)</td>
+        <td>x₀·(xₗᵀw)+xₗ</td>
+        <td>d 维 + d 维 + d 参数</td>
+        <td style="color:var(--cyan)">d 维向量</td>
+        <td>显式高阶</td>
+        <td>DCN, MMCN</td>
+        <td>O(d)</td>
+      </tr>
+    </table>
+    <div style="margin-top:1rem; padding:.8rem 1rem; background:rgba(108,92,231,.04); border-left:3px solid var(--purple); border-radius:0 8px 8px 0;">
+      <p style="font-size:.84rem; color:var(--text); margin:0;">
+        <strong style="color:var(--purple)">选择逻辑：</strong>
+        信息量越大，计算越贵。工业界的选择通常是：<strong style="color:var(--gold)">内积</strong>（大规模、低延迟）或<strong style="color:var(--cyan)">交叉</strong>（显式高阶、参数高效）。
+        <strong style="color:var(--cyan)">Hadamard 积</strong>是信息与效率的折中。<strong style="color:var(--pink)">张量外积</strong>理论最强但实践中较少使用。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     1. LR
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="lr">
+  <div class="section-header">
+    <div class="section-num sn-gold">1</div>
+    <div class="section-title">LR — Logistic Regression</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">Logistic Regression 架构</text>
+        <!-- Sparse input -->
+        <g transform="translate(30,260)">
+          <rect x="0" y="0" width="380" height="40" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="15" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Sparse Input (One-Hot)</text>
+          <rect x="10" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".2"/>
+          <rect x="22" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".6"/>
+          <rect x="34" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".1"/>
+          <rect x="46" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".1"/>
+          <rect x="58" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".7"/>
+          <rect x="70" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".1"/>
+          <rect x="82" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".1"/>
+          <rect x="94" y="22" width="8" height="10" rx="2" fill="#fdcb6e" opacity=".5"/>
+          <text x="120" y="32" fill="#888" font-size="8">... 百万维，绝大多数为 0</text>
+        </g>
+        <!-- Weights -->
+        <g transform="translate(30,175)">
+          <rect x="0" y="0" width="380" height="55" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Linear Weights</text>
+          <text x="190" y="38" fill="#888" font-size="9" text-anchor="middle">w = [w₁, w₂, ..., wₙ] (每个特征一个独立权重)</text>
+          <text x="190" y="50" fill="#666" font-size="8" text-anchor="middle">无特征交互 -- 各特征独立贡献</text>
+        </g>
+        <!-- Arrow -->
+        <line x1="220" y1="175" x2="220" y2="145" stroke="#888" stroke-width="1" opacity=".4"/>
+        <!-- Sigmoid -->
+        <g transform="translate(110,70)">
+          <rect x="0" y="0" width="220" height="65" rx="12" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="110" y="20" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">Sigmoid Output</text>
+          <text x="110" y="40" fill="#fdcb6e" font-size="10" text-anchor="middle">P(y=1|x) = sigma(w0 + wTx)</text>
+          <text x="110" y="55" fill="#888" font-size="8" text-anchor="middle">sigma(z) = 1 / (1 + e^(-z))</text>
+        </g>
+        <!-- No interaction indicator -->
+        <g transform="translate(30,42)">
+          <rect x="0" y="0" width="90" height="25" rx="6" fill="rgba(225,112,85,.1)" stroke="#e17055" stroke-width="1"/>
+          <text x="45" y="16" fill="#e17055" font-size="8" text-anchor="middle">无特征交互</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">LR: CTR 预估的起点</h3>
+      <p>Logistic Regression 是 CTR 预估最基础的模型，将每个特征独立地映射到点击概率。</p>
+      <div class="formula">P(y=1|x) = sigma(w₀ + Sigma_i w_i x_i)</div>
+      <p><strong style="color:var(--gold)">核心特点:</strong></p>
+      <p>- 输入为 one-hot 编码的高维稀疏向量 (百万~千万维)</p>
+      <p>- 每个特征拥有一个独立权重 w_i</p>
+      <p>- 特征之间完全独立，无任何交互建模</p>
+      <p><strong style="color:#e17055">根本局限:</strong> 无法捕捉特征间的组合效应。例如「性别=女」与「广告类目=美妆」各自独立贡献，但它们的组合效应远大于线性叠加。</p>
+      <div class="tags">
+        <span>线性模型</span>
+        <span>无特征交互</span>
+        <span>高维稀疏</span>
+        <span>可解释性强</span>
+        <span>工业基线</span>
+      </div>
+      <div class="key key-gold"><strong>LR 的历史地位:</strong> 尽管简单，LR 凭借高效、稳定和可解释性，在工业界长期作为 CTR 预估的标准基线。它的局限催生了所有后续模型的发展。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     2. POLY2
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="poly2">
+  <div class="section-header">
+    <div class="section-num sn-gold">2</div>
+    <div class="section-title">POLY2 — Polynomial (Degree 2)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">POLY2: 显式二阶多项式交叉</text>
+        <!-- Input features -->
+        <g transform="translate(30,260)">
+          <rect x="0" y="0" width="380" height="35" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="22" fill="#fdcb6e" font-size="10" text-anchor="middle">原始特征 x₁, x₂, x₃, ..., xₙ</text>
+        </g>
+        <!-- Cross features -->
+        <g transform="translate(30,160)">
+          <rect x="0" y="0" width="380" height="75" rx="10" fill="rgba(253,203,110,.05)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">交叉特征层 -- 所有两两组合</text>
+          <text x="40" y="42" fill="#fdcb6e" font-size="9">x₁x₂</text>
+          <text x="100" y="42" fill="#fdcb6e" font-size="9">x₁x₃</text>
+          <text x="160" y="42" fill="#fdcb6e" font-size="9">x₂x₃</text>
+          <text x="220" y="42" fill="#fdcb6e" font-size="9">x₁x₄</text>
+          <text x="280" y="42" fill="#888" font-size="9">...</text>
+          <text x="190" y="65" fill="#e17055" font-size="9" text-anchor="middle">共 C(n,2) = n(n-1)/2 个交叉 -- 每对独立权重 w_ij</text>
+        </g>
+        <!-- Weight matrix -->
+        <g transform="translate(60,60)">
+          <rect x="0" y="0" width="140" height="70" rx="8" fill="rgba(225,112,85,.06)" stroke="#e17055" stroke-width="1"/>
+          <text x="70" y="18" fill="#e17055" font-size="10" font-weight="bold" text-anchor="middle">权重矩阵 W</text>
+          <text x="70" y="38" fill="#888" font-size="9" text-anchor="middle">n x n 对称矩阵</text>
+          <text x="70" y="55" fill="#e17055" font-size="9" text-anchor="middle">O(n^2) 参数!</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(240,60)">
+          <rect x="0" y="0" width="170" height="70" rx="10" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="85" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="85" y="42" fill="#888" font-size="8" text-anchor="middle">y = w0 + Sum w_i x_i</text>
+          <text x="85" y="58" fill="#fdcb6e" font-size="8" text-anchor="middle">+ Sum_ij w_ij x_i x_j</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="220" y1="260" x2="220" y2="235" stroke="#888" stroke-width="1" opacity=".4"/>
+        <line x1="130" y1="160" x2="130" y2="130" stroke="#888" stroke-width="1" opacity=".4"/>
+        <line x1="325" y1="160" x2="325" y2="130" stroke="#888" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">POLY2: 暴力枚举所有二阶交叉</h3>
+      <p>POLY2 是对 LR 最直接的改进: 显式枚举所有特征对 (x_i, x_j) 并为每对学习一个独立权重 w_ij。</p>
+      <div class="formula">y = w₀ + Sigma_i w_i x_i + Sigma_{i=1}^{n} Sigma_{j=i+1}^{n} w_{ij} x_i x_j</div>
+      <p><strong style="color:var(--gold)">解决的问题:</strong> 相比 LR，首次引入了特征交互建模。</p>
+      <p><strong style="color:#e17055">根本缺陷:</strong></p>
+      <p>- <strong>参数爆炸:</strong> 需要 O(n^2) 个交互权重。当 n=100万特征时，参数量达到万亿级别</p>
+      <p>- <strong>数据稀疏:</strong> 绝大多数特征对 (x_i, x_j) 在训练集中从未共现过，w_ij 无法有效学习</p>
+      <p>- <strong>无泛化能力:</strong> 每个 w_ij 独立学习，从未共现的特征对无法获得有意义的交互权重</p>
+      <div class="tags">
+        <span>显式二阶交互</span>
+        <span>O(n^2) 参数</span>
+        <span>无泛化能力</span>
+        <span>稀疏数据问题</span>
+      </div>
+      <div class="key key-gold"><strong>POLY2 的教训:</strong> 直接学习 n x n 的交互矩阵在高维稀疏场景不可行。这正是 FM 通过矩阵分解解决的核心问题。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     3. FM
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="fm">
+  <div class="section-header">
+    <div class="section-num sn-gold">3</div>
+    <div class="section-title">FM — Factorization Machines (2010, Rendle)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">FM: 分解的二阶交互</text>
+        <!-- Input -->
+        <g transform="translate(30,285)">
+          <rect x="0" y="0" width="380" height="35" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="22" fill="#fdcb6e" font-size="10" text-anchor="middle">稀疏输入 x (百万维 one-hot)</text>
+        </g>
+        <!-- Embedding layer -->
+        <g transform="translate(30,210)">
+          <rect x="0" y="0" width="380" height="55" rx="10" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Latent Vectors (Embedding)</text>
+          <rect x="15" y="28" width="42" height="16" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="36" y="40" fill="#fff" font-size="7" text-anchor="middle">v₁ (k)</text>
+          <rect x="65" y="28" width="42" height="16" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="86" y="40" fill="#fff" font-size="7" text-anchor="middle">v₂ (k)</text>
+          <rect x="115" y="28" width="42" height="16" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="136" y="40" fill="#fff" font-size="7" text-anchor="middle">v₃ (k)</text>
+          <rect x="165" y="28" width="42" height="16" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="186" y="40" fill="#fff" font-size="7" text-anchor="middle">v₄ (k)</text>
+          <text x="230" y="40" fill="#888" font-size="8">... 每个特征 -> k维隐向量</text>
+        </g>
+        <!-- Interaction -->
+        <g transform="translate(30,120)">
+          <rect x="0" y="0" width="380" height="65" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Pairwise Inner Product</text>
+          <text x="55" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">v1,v2</text>
+          <text x="130" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">v1,v3</text>
+          <text x="205" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">v2,v3</text>
+          <text x="280" y="42" fill="#888" font-size="9" text-anchor="middle">...</text>
+          <text x="190" y="58" fill="#888" font-size="8" text-anchor="middle">w_ij = &lt;v_i, v_j&gt; -- 交互权重由隐向量内积决定</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(100,45)">
+          <rect x="0" y="0" width="240" height="50" rx="10" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="120" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="120" y="40" fill="#888" font-size="9" text-anchor="middle">y = w0 + Sum w_i x_i + Sum &lt;v_i,v_j&gt; x_i x_j</text>
+        </g>
+        <!-- Complexity badge -->
+        <g transform="translate(350,48)">
+          <rect x="0" y="0" width="70" height="25" rx="6" fill="rgba(85,239,196,.1)" stroke="#55efc4" stroke-width="1"/>
+          <text x="35" y="16" fill="#55efc4" font-size="9" text-anchor="middle" font-weight="bold">O(kn)</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="220" y1="285" x2="220" y2="265" stroke="#888" stroke-width="1" opacity=".4"/>
+        <line x1="220" y1="210" x2="220" y2="185" stroke="#888" stroke-width="1" opacity=".4"/>
+        <line x1="220" y1="120" x2="220" y2="95" stroke="#888" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">FM: 矩阵分解拯救特征交互 (Rendle, 2010)</h3>
+      <p><strong>核心洞察:</strong> 不直接学习 n x n 的交互权重矩阵 W，而是将其分解为低秩近似。</p>
+      <div class="formula">y = w₀ + Sigma_i w_i x_i + Sigma_{i&lt;j} &lt;v_i, v_j&gt; x_i x_j<br><br>其中 w_ij ~ &lt;v_i, v_j&gt; = Sigma_{f=1}^{k} v_{if} * v_{jf}</div>
+      <p><strong style="color:var(--gold)">关键创新:</strong></p>
+      <p>- 每个特征用一个 k 维隐向量 v_i 表示 (k &lt;&lt; n)</p>
+      <p>- 参数量从 O(n^2) 降到 <strong>O(kn)</strong></p>
+      <p>- 即使特征 i 和 j 从未共现，只要它们各自与其他特征有过交互，就能通过隐向量泛化出有意义的 w_ij</p>
+      <p><strong style="color:var(--cyan)">O(kn) 计算技巧:</strong> 通过数学恒等变换，二阶交互项可以在 O(kn) 而非 O(kn^2) 时间内计算。</p>
+      <div class="tags">
+        <span>矩阵分解</span>
+        <span>隐向量</span>
+        <span>O(kn) 复杂度</span>
+        <span>二阶交互</span>
+        <span>泛化能力</span>
+      </div>
+      <div class="key key-gold"><strong>FM 的里程碑意义:</strong> 首次在稀疏数据上高效且泛化地建模特征交互。它奠定了所有后续 CTR 模型的 Embedding 思想基础。局限是只能建模二阶交互。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     4. FFM
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="ffm">
+  <div class="section-header">
+    <div class="section-num sn-gold">4</div>
+    <div class="section-title">FFM — Field-aware FM (2016, Juan et al.)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">FFM: Field-aware Factorization Machines</text>
+        <!-- Fields -->
+        <g transform="translate(20,50)">
+          <rect x="0" y="0" width="400" height="55" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="200" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Fields (特征域)</text>
+          <rect x="15" y="28" width="80" height="18" rx="4" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="55" y="40" fill="#fdcb6e" font-size="8" text-anchor="middle">User (域1)</text>
+          <rect x="110" y="28" width="80" height="18" rx="4" fill="rgba(108,92,231,.15)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="150" y="40" fill="#6c5ce7" font-size="8" text-anchor="middle">Ad (域2)</text>
+          <rect x="205" y="28" width="80" height="18" rx="4" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1"/>
+          <text x="245" y="40" fill="#00cec9" font-size="8" text-anchor="middle">Context (域3)</text>
+          <text x="310" y="40" fill="#888" font-size="8">...</text>
+        </g>
+        <!-- FM vs FFM comparison -->
+        <g transform="translate(20,125)">
+          <!-- FM side -->
+          <rect x="0" y="0" width="185" height="120" rx="10" fill="rgba(253,203,110,.03)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="92" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">FM: 一个 v_i</text>
+          <circle cx="92" cy="55" r="18" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="92" y="59" fill="#fdcb6e" font-size="9" text-anchor="middle">v_i</text>
+          <text x="50" y="95" fill="#888" font-size="8" text-anchor="middle">对域2</text>
+          <text x="135" y="95" fill="#888" font-size="8" text-anchor="middle">对域3</text>
+          <line x1="50" y1="85" x2="80" y2="70" stroke="#fdcb6e" stroke-width="1" stroke-dasharray="3"/>
+          <line x1="135" y1="85" x2="105" y2="70" stroke="#fdcb6e" stroke-width="1" stroke-dasharray="3"/>
+          <text x="92" y="115" fill="#e17055" font-size="7" text-anchor="middle">同一个向量应对所有 field</text>
+        </g>
+        <g transform="translate(215,125)">
+          <!-- FFM side -->
+          <rect x="0" y="0" width="205" height="120" rx="10" fill="rgba(253,203,110,.05)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="102" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">FFM: 每个域一个 v_{i,f}</text>
+          <circle cx="60" cy="55" r="16" fill="rgba(108,92,231,.15)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="60" y="59" fill="#6c5ce7" font-size="8" text-anchor="middle">v_{i,2}</text>
+          <circle cx="140" cy="55" r="16" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="140" y="59" fill="#00cec9" font-size="8" text-anchor="middle">v_{i,3}</text>
+          <text x="60" y="95" fill="#6c5ce7" font-size="8" text-anchor="middle">对域2</text>
+          <text x="140" y="95" fill="#00cec9" font-size="8" text-anchor="middle">对域3</text>
+          <text x="102" y="115" fill="#55efc4" font-size="7" text-anchor="middle">针对不同 field 用不同向量!</text>
+        </g>
+        <!-- Formula -->
+        <g transform="translate(20,265)">
+          <rect x="0" y="0" width="400" height="55" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="200" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">FFM 交互公式</text>
+          <text x="200" y="38" fill="#fdcb6e" font-size="9" text-anchor="middle">y = w0 + Sum w_i x_i + Sum_{i&lt;j} &lt;v_{i,f_j}, v_{j,f_i}&gt; x_i x_j</text>
+          <text x="200" y="52" fill="#888" font-size="8" text-anchor="middle">特征 i 用「面向域 f_j 的向量」，特征 j 用「面向域 f_i 的向量」</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">FFM: 感知 Field 的精细化交互 (Juan et al., 2016)</h3>
+      <p><strong>核心洞察:</strong> 在 FM 中，每个特征只有一个隐向量 v_i，无论与哪个域的特征交互都用同一个。但直觉上，「用户年龄」与「广告类目」交互时应使用不同的表示，与「时间」交互时又该不同。</p>
+      <div class="formula">y = w₀ + Sum w_i x_i + Sum_{i&lt;j} &lt;v_{i,f_j}, v_{j,f_i}&gt; x_i x_j<br><br>v_{i,f_j}: 特征 i 面向域 f_j 的专用隐向量</div>
+      <p><strong style="color:var(--gold)">关键改进:</strong> 每个特征为每个 field 维护一个独立的隐向量。如果有 f 个 field，则每个特征有 f 个 k 维向量。</p>
+      <p><strong style="color:#e17055">代价:</strong> 参数量从 FM 的 O(kn) 增长到 O(kfn)。</p>
+      <div class="tags">
+        <span>Field-aware</span>
+        <span>O(kfn) 参数</span>
+        <span>Criteo/Avazu 竞赛冠军</span>
+        <span>更精细的交互</span>
+      </div>
+      <div class="key key-gold"><strong>FFM 的贡献:</strong> 在多个 CTR 竞赛中取得冠军，证明了 field-aware 交互的重要性。但参数量和复杂度的增长限制了其在超大规模工业场景的应用。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     5. Wide & Deep
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="widedeep">
+  <div class="section-header">
+    <div class="section-num sn-purple">5</div>
+    <div class="section-title">Wide & Deep (2016, Google)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">Wide & Deep 架构 (Google, 2016)</text>
+        <!-- Input -->
+        <g transform="translate(20,280)">
+          <rect x="0" y="0" width="400" height="35" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="200" y="22" fill="#6c5ce7" font-size="10" text-anchor="middle">Raw Features + Hand-crafted Cross Features</text>
+        </g>
+        <!-- Wide side -->
+        <g transform="translate(20,120)">
+          <rect x="0" y="0" width="175" height="130" rx="12" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="87" y="22" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">Wide (Memorization)</text>
+          <rect x="15" y="35" width="145" height="35" rx="6" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="87" y="58" fill="#888" font-size="8" text-anchor="middle">y_wide = w^T [x, phi(x)]</text>
+          <text x="87" y="85" fill="#e17055" font-size="8" text-anchor="middle">phi(x) = 手工交叉特征</text>
+          <text x="87" y="100" fill="#e17055" font-size="8" text-anchor="middle">需要领域专家!</text>
+          <text x="87" y="120" fill="#888" font-size="7" text-anchor="middle">记忆高频共现模式</text>
+        </g>
+        <!-- Deep side -->
+        <g transform="translate(215,120)">
+          <rect x="0" y="0" width="205" height="130" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="102" y="22" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">Deep (Generalization)</text>
+          <rect x="20" y="40" width="165" height="14" rx="3" fill="#6c5ce7" opacity=".1"/>
+          <text x="102" y="51" fill="#888" font-size="7" text-anchor="middle">Embedding -> Dense -> ReLU</text>
+          <rect x="30" y="60" width="145" height="14" rx="3" fill="#6c5ce7" opacity=".15"/>
+          <text x="102" y="71" fill="#888" font-size="7" text-anchor="middle">Dense -> ReLU</text>
+          <rect x="40" y="80" width="125" height="14" rx="3" fill="#6c5ce7" opacity=".2"/>
+          <text x="102" y="91" fill="#888" font-size="7" text-anchor="middle">Dense -> ReLU</text>
+          <text x="102" y="120" fill="#888" font-size="7" text-anchor="middle">泛化到未见过的特征组合</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(100,45)">
+          <rect x="0" y="0" width="240" height="45" rx="10" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="120" y="18" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">Joint Output</text>
+          <text x="120" y="36" fill="#888" font-size="9" text-anchor="middle">P(y=1) = sigma(y_wide + y_deep)</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="107" y1="120" x2="175" y2="90" stroke="#fdcb6e" stroke-width="1" opacity=".4"/>
+        <line x1="317" y1="120" x2="265" y2="90" stroke="#6c5ce7" stroke-width="1" opacity=".4"/>
+        <line x1="107" y1="280" x2="107" y2="250" stroke="#fdcb6e" stroke-width="1" opacity=".3"/>
+        <line x1="317" y1="280" x2="317" y2="250" stroke="#6c5ce7" stroke-width="1" opacity=".3"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">Wide & Deep: 记忆与泛化的结合 (Google, 2016)</h3>
+      <p><strong>核心思想:</strong> 模型需要两种能力 -- <strong style="color:var(--gold)">Memorization</strong> (记住高频共现) 和 <strong style="color:var(--purple)">Generalization</strong> (泛化到未见模式)。</p>
+      <div class="formula formula-purple">P(y=1) = sigma(w_wide^T [x, phi(x)] + w_deep^T a^(l_f))</div>
+      <p><strong style="color:var(--gold)">Wide 组件:</strong> 线性模型 + 手工交叉特征 phi(x)，擅长记忆（如「用户A AND 物品B -> 点击」）</p>
+      <p><strong style="color:var(--purple)">Deep 组件:</strong> Embedding + 多层 DNN，擅长泛化（发现未见过的特征组合）</p>
+      <p><strong style="color:#e17055">关键局限:</strong></p>
+      <p>- Wide 侧的交叉特征 phi(x) 需要人工设计，依赖领域知识</p>
+      <p>- Wide 和 Deep 的输入表示不同，缺少共享</p>
+      <div class="tags">
+        <span>Google Play 推荐</span>
+        <span>Memorization + Generalization</span>
+        <span>需要手工特征工程</span>
+        <span>联合训练</span>
+      </div>
+      <div class="key key-purple"><strong>Wide & Deep 的里程碑意义:</strong> 首次在工业界大规模验证了「浅层记忆 + 深层泛化」的双路架构范式，深刻影响了后续所有 CTR 模型的设计思路。其局限 (手工特征工程) 直接催生了 DeepFM。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     6. DeepFM
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="deepfm">
+  <div class="section-header">
+    <div class="section-num sn-purple">6</div>
+    <div class="section-title">DeepFM — FM + DNN Shared Embedding (2017, Huawei)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DeepFM 架构 (Huawei, 2017)</text>
+        <!-- Shared Embedding -->
+        <g transform="translate(20,295)">
+          <rect x="0" y="0" width="400" height="45" rx="10" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="2"/>
+          <text x="200" y="18" fill="#00cec9" font-size="11" font-weight="bold" text-anchor="middle">Shared Embedding Layer</text>
+          <rect x="15" y="26" width="32" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="53" y="26" width="32" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="91" y="26" width="32" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="129" y="26" width="32" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="167" y="26" width="32" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <text x="220" y="36" fill="#888" font-size="8">e1  e2  e3  e4  e5 ...</text>
+        </g>
+        <!-- FM Component -->
+        <g transform="translate(20,115)">
+          <rect x="0" y="0" width="185" height="150" rx="12" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="92" y="22" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">FM Component</text>
+          <rect x="15" y="38" width="155" height="28" rx="6" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="92" y="56" fill="#fdcb6e" font-size="9" text-anchor="middle">1st: Sum w_i x_i</text>
+          <rect x="15" y="75" width="155" height="28" rx="6" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="92" y="93" fill="#fdcb6e" font-size="9" text-anchor="middle">2nd: Sum &lt;e_i, e_j&gt;</text>
+          <text x="92" y="120" fill="#fdcb6e" font-size="9" text-anchor="middle">y_FM = w0 + 1st + 2nd</text>
+          <text x="92" y="140" fill="#888" font-size="8" text-anchor="middle">低阶显式交互 (无需特征工程!)</text>
+        </g>
+        <!-- DNN Component -->
+        <g transform="translate(225,115)">
+          <rect x="0" y="0" width="195" height="150" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="97" y="22" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">DNN Component</text>
+          <rect x="18" y="42" width="159" height="14" rx="3" fill="#6c5ce7" opacity=".12"/>
+          <text x="97" y="53" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 1 (ReLU)</text>
+          <rect x="28" y="62" width="139" height="14" rx="3" fill="#6c5ce7" opacity=".18"/>
+          <text x="97" y="73" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 2 (ReLU)</text>
+          <rect x="38" y="82" width="119" height="14" rx="3" fill="#6c5ce7" opacity=".24"/>
+          <text x="97" y="93" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 3 (ReLU)</text>
+          <text x="97" y="120" fill="#6c5ce7" font-size="9" text-anchor="middle">y_DNN = DNN(concat(e_i))</text>
+          <text x="97" y="140" fill="#888" font-size="8" text-anchor="middle">高阶隐式交互</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(110,45)">
+          <rect x="0" y="0" width="220" height="40" rx="10" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="110" y="16" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="110" y="34" fill="#888" font-size="9" text-anchor="middle">y = sigma(y_FM + y_DNN)</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="112" y1="115" x2="175" y2="85" stroke="#fdcb6e" stroke-width="1" opacity=".4"/>
+        <line x1="322" y1="115" x2="265" y2="85" stroke="#6c5ce7" stroke-width="1" opacity=".4"/>
+        <line x1="112" y1="295" x2="112" y2="265" stroke="#fdcb6e" stroke-width="1" opacity=".3"/>
+        <line x1="322" y1="295" x2="322" y2="265" stroke="#6c5ce7" stroke-width="1" opacity=".3"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">DeepFM: 自动特征交叉 + 共享 Embedding (Huawei, 2017)</h3>
+      <p>DeepFM 对 Wide & Deep 的三大改进:</p>
+      <div class="formula formula-purple">y = sigma(y_FM + y_DNN)<br>y_FM  = w0 + Sum w_i x_i + Sum &lt;e_i, e_j&gt;<br>y_DNN = DNN(concat(e1, e2, ..., em))</div>
+      <p><strong style="color:var(--cyan)">1. 共享 Embedding:</strong> FM 和 DNN 使用同一组 Embedding 向量，双路梯度共同优化</p>
+      <p><strong style="color:var(--gold)">2. FM 替代 Wide:</strong> 用 FM 自动学习二阶交互，无需手工特征工程</p>
+      <p><strong style="color:var(--purple)">3. 端到端训练:</strong> 一个优化器统一训练，不再需要分别优化</p>
+      <p><strong style="color:#e17055">仍存在的局限:</strong> DNN 的高阶交互是隐式的 (bit-wise 黑盒)，无法控制交互阶数。</p>
+      <div class="tags">
+        <span>共享 Embedding</span>
+        <span>无需特征工程</span>
+        <span>FM + DNN</span>
+        <span>端到端训练</span>
+        <span>工业标准 Baseline</span>
+      </div>
+      <div class="key key-purple"><strong>DeepFM 是工业 CTR 预估的标准起点。</strong> 共享 Embedding 是核心创新 -- FM 侧的梯度和 DNN 侧的梯度共同优化同一组 Embedding，低阶与高阶交互信号互相增强。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     7. DCN
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="dcn">
+  <div class="section-header">
+    <div class="section-num sn-cyan">7</div>
+    <div class="section-title">DCN — Deep & Cross Network (2017, Google)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DCN 架构 (Google, 2017)</text>
+        <!-- Input -->
+        <g transform="translate(20,300)">
+          <rect x="0" y="0" width="400" height="35" rx="8" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1"/>
+          <text x="200" y="22" fill="#00cec9" font-size="10" text-anchor="middle">Embedding + Dense: x0 = concat(e1, e2, ..., dense)</text>
+        </g>
+        <!-- Cross Network -->
+        <g transform="translate(20,105)">
+          <rect x="0" y="0" width="175" height="170" rx="12" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="87" y="22" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">Cross Network</text>
+          <!-- Cross layers -->
+          <rect x="15" y="38" width="145" height="25" rx="5" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="87" y="55" fill="#00cec9" font-size="8" text-anchor="middle">Cross Layer 1 (2nd order)</text>
+          <rect x="15" y="70" width="145" height="25" rx="5" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="87" y="87" fill="#00cec9" font-size="8" text-anchor="middle">Cross Layer 2 (3rd order)</text>
+          <rect x="15" y="102" width="145" height="25" rx="5" fill="rgba(0,206,201,.12)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="87" y="119" fill="#00cec9" font-size="8" text-anchor="middle">Cross Layer L (L+1 order)</text>
+          <text x="87" y="150" fill="#00cec9" font-size="8" text-anchor="middle">x_{l+1} = x0 * x_l^T w + b + x_l</text>
+          <text x="87" y="165" fill="#888" font-size="7" text-anchor="middle">每层仅 O(d) 参数!</text>
+        </g>
+        <!-- Deep Network -->
+        <g transform="translate(220,105)">
+          <rect x="0" y="0" width="200" height="170" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="100" y="22" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">Deep Network</text>
+          <rect x="18" y="42" width="164" height="14" rx="3" fill="#6c5ce7" opacity=".12"/>
+          <text x="100" y="53" fill="#888" font-size="7" text-anchor="middle">Dense + ReLU</text>
+          <rect x="28" y="62" width="144" height="14" rx="3" fill="#6c5ce7" opacity=".18"/>
+          <text x="100" y="73" fill="#888" font-size="7" text-anchor="middle">Dense + ReLU</text>
+          <rect x="38" y="82" width="124" height="14" rx="3" fill="#6c5ce7" opacity=".24"/>
+          <text x="100" y="93" fill="#888" font-size="7" text-anchor="middle">Dense + ReLU</text>
+          <text x="100" y="130" fill="#888" font-size="8" text-anchor="middle">隐式非线性交互</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(100,40)">
+          <rect x="0" y="0" width="240" height="40" rx="10" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="120" y="16" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="120" y="34" fill="#888" font-size="9" text-anchor="middle">y = sigma(concat(x_cross, x_deep) * w)</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="107" y1="105" x2="175" y2="80" stroke="#00cec9" stroke-width="1" opacity=".4"/>
+        <line x1="320" y1="105" x2="265" y2="80" stroke="#6c5ce7" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">DCN: 显式交叉层建模高阶交互 (Google, 2017)</h3>
+      <p><strong>核心创新:</strong> Cross Network -- 用显式的交叉层 (Cross Layer) 逐层提升交互阶数，每层仅需 O(d) 参数。</p>
+      <div class="formula formula-cyan">Cross Layer:<br>x_{l+1} = x₀ * (x_l^T * w_l) + b_l + x_l<br><br>- x₀: 原始输入<br>- w_l, b_l: 第 l 层参数 (仅 d 维向量!)<br>- L 层 Cross Network -> L+1 阶交互</div>
+      <p><strong style="color:var(--cyan)">关键优势:</strong></p>
+      <p>- 显式建模有界阶交互 (L+1 阶)</p>
+      <p>- 每层参数量仅 O(d)，L 层总参数 O(d * L)，极度参数高效</p>
+      <p>- 与 DNN 并联，显式 + 隐式互补</p>
+      <p><strong style="color:#e17055">局限:</strong> 每层的交叉是 x₀ * (x_l^T * w)，中间 x_l^T * w 是标量，表达能力有限 (rank-1 constraint)。</p>
+      <div class="tags">
+        <span>Cross Layer</span>
+        <span>O(d*L) 参数</span>
+        <span>显式有界阶</span>
+        <span>参数高效</span>
+        <span>Rank-1 局限</span>
+      </div>
+      <div class="key key-cyan"><strong>DCN 开创了 Cross Network 范式。</strong> 用极少的参数实现显式高阶交互，但 rank-1 的限制使得每层的交叉表达能力受限，这正是 DCN-V2 要解决的问题。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     8. xDeepFM
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="xdeepfm">
+  <div class="section-header">
+    <div class="section-num sn-cyan">8</div>
+    <div class="section-title">xDeepFM — CIN + DNN (2018, Microsoft KDD)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">xDeepFM 架构 (Microsoft, KDD 2018)</text>
+        <!-- Shared Embedding -->
+        <g transform="translate(20,315)">
+          <rect x="0" y="0" width="400" height="40" rx="10" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="2"/>
+          <text x="200" y="18" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">Shared Embedding</text>
+          <text x="200" y="34" fill="#888" font-size="8" text-anchor="middle">e1, e2, ..., em (m fields, each k-dim)</text>
+        </g>
+        <!-- Linear -->
+        <g transform="translate(20,195)">
+          <rect x="0" y="0" width="100" height="95" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="50" y="20" fill="#fdcb6e" font-size="9" font-weight="bold" text-anchor="middle">Linear</text>
+          <text x="50" y="42" fill="#888" font-size="8" text-anchor="middle">1st order</text>
+          <text x="50" y="60" fill="#fdcb6e" font-size="8" text-anchor="middle">Sum w_i x_i</text>
+          <text x="50" y="85" fill="#888" font-size="7" text-anchor="middle">显式一阶</text>
+        </g>
+        <!-- CIN -->
+        <g transform="translate(135,150)">
+          <rect x="0" y="0" width="165" height="140" rx="10" fill="rgba(0,206,201,.05)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="82" y="20" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">CIN</text>
+          <text x="82" y="36" fill="#888" font-size="7" text-anchor="middle">Compressed Interaction Network</text>
+          <rect x="12" y="48" width="141" height="14" rx="3" fill="#00cec9" opacity=".12"/>
+          <text x="82" y="59" fill="#888" font-size="7" text-anchor="middle">Layer 1: X^0 x X^0 -> 2nd order</text>
+          <rect x="18" y="68" width="129" height="14" rx="3" fill="#00cec9" opacity=".18"/>
+          <text x="82" y="79" fill="#888" font-size="7" text-anchor="middle">Layer 2: X^1 x X^0 -> 3rd order</text>
+          <rect x="24" y="88" width="117" height="14" rx="3" fill="#00cec9" opacity=".24"/>
+          <text x="82" y="99" fill="#888" font-size="7" text-anchor="middle">Layer T: X^{T-1} x X^0 -> (T+1)th</text>
+          <text x="82" y="125" fill="#00cec9" font-size="8" text-anchor="middle">显式 vector-wise</text>
+        </g>
+        <!-- DNN -->
+        <g transform="translate(315,195)">
+          <rect x="0" y="0" width="105" height="95" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="52" y="20" fill="#6c5ce7" font-size="9" font-weight="bold" text-anchor="middle">DNN</text>
+          <rect x="10" y="35" width="85" height="12" rx="3" fill="#6c5ce7" opacity=".12"/>
+          <rect x="16" y="52" width="73" height="12" rx="3" fill="#6c5ce7" opacity=".18"/>
+          <rect x="22" y="69" width="61" height="12" rx="3" fill="#6c5ce7" opacity=".24"/>
+          <text x="52" y="90" fill="#888" font-size="7" text-anchor="middle">隐式 bit-wise</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(80,55)">
+          <rect x="0" y="0" width="280" height="50" rx="10" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="140" y="18" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="140" y="38" fill="#888" font-size="9" text-anchor="middle">y = sigma(y_Linear + y_CIN + y_DNN)</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="70" y1="195" x2="140" y2="105" stroke="#fdcb6e" stroke-width="1" opacity=".3"/>
+        <line x1="217" y1="150" x2="220" y2="105" stroke="#00cec9" stroke-width="1" opacity=".3"/>
+        <line x1="367" y1="195" x2="300" y2="105" stroke="#6c5ce7" stroke-width="1" opacity=".3"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">xDeepFM: CIN 实现 Vector-wise 显式高阶交互 (Microsoft, KDD 2018)</h3>
+      <p><strong>x = eXtreme。</strong> xDeepFM 同时实现显式 (CIN) + 隐式 (DNN) 的任意阶特征交互。</p>
+      <div class="formula formula-cyan">y = sigma(y_Linear + y_CIN + y_DNN)<br><br>CIN 核心操作:<br>X^{k+1}_h = Sum_i Sum_j W^k_{h,i,j} (X^k_i . X^0_j)<br>. = Hadamard product (逐元素乘)</div>
+      <p><strong style="color:var(--cyan)">CIN 的核心创新:</strong></p>
+      <p>- <strong>Vector-wise 交互:</strong> 保留 field embedding 的向量结构 (区别于 DNN 的 bit-wise)</p>
+      <p>- <strong>阶数可控:</strong> T 层 CIN = T+1 阶交互</p>
+      <p>- <strong>每层与 X^0 交互:</strong> 保证阶数精确递增</p>
+      <p>- <strong>压缩:</strong> 用 W 矩阵压缩中间张量，避免指数膨胀</p>
+      <p><strong style="color:#e17055">局限:</strong> CIN 的计算复杂度 O(mHkT) 较高，工业部署时需要权衡。</p>
+      <div class="tags">
+        <span>CIN</span>
+        <span>Vector-wise</span>
+        <span>显式高阶</span>
+        <span>阶数可控</span>
+        <span>Hadamard 积</span>
+      </div>
+      <div class="key key-cyan"><strong>xDeepFM 的理论贡献:</strong> 首次在 CTR 领域实现了 vector-wise 的显式有界阶高阶交互。CIN 与 DNN 形成显式+隐式的终极互补。但计算开销限制了其工业规模应用。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     9. DCN-V2
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="dcnv2">
+  <div class="section-header">
+    <div class="section-num sn-cyan">9</div>
+    <div class="section-title">DCN-V2 — Deep & Cross Network V2 (2020, Google)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DCN-V2 架构 (Google, 2020)</text>
+        <!-- DCN v1 vs v2 -->
+        <g transform="translate(20,50)">
+          <!-- V1 -->
+          <rect x="0" y="0" width="185" height="120" rx="10" fill="rgba(0,206,201,.03)" stroke="#00cec9" stroke-width="1" stroke-dasharray="4"/>
+          <text x="92" y="20" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle" opacity=".5">DCN v1: vector w</text>
+          <text x="92" y="42" fill="#888" font-size="8" text-anchor="middle">x_{l+1} = x0 (x_l^T w) + x_l</text>
+          <text x="92" y="62" fill="#888" font-size="8" text-anchor="middle">x_l^T w -> 标量</text>
+          <text x="92" y="82" fill="#e17055" font-size="8" text-anchor="middle">Rank-1 限制</text>
+          <text x="92" y="105" fill="#e17055" font-size="8" text-anchor="middle">表达能力受限</text>
+        </g>
+        <g transform="translate(215,50)">
+          <!-- V2 -->
+          <rect x="0" y="0" width="205" height="120" rx="10" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="102" y="20" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle">DCN-V2: matrix W</text>
+          <text x="102" y="42" fill="#00cec9" font-size="8" text-anchor="middle">x_{l+1} = x0 . (W_l x_l + b_l) + x_l</text>
+          <text x="102" y="62" fill="#00cec9" font-size="8" text-anchor="middle">W_l x_l -> d 维向量</text>
+          <text x="102" y="82" fill="#55efc4" font-size="8" text-anchor="middle">Full-rank 表达能力!</text>
+          <text x="102" y="105" fill="#888" font-size="8" text-anchor="middle">. = Hadamard product</text>
+        </g>
+        <!-- MoE variant -->
+        <g transform="translate(20,195)">
+          <rect x="0" y="0" width="400" height="80" rx="10" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="200" y="18" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">DCN-V2 + Mixture of Experts</text>
+          <!-- Expert boxes -->
+          <rect x="20" y="30" width="70" height="35" rx="6" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="55" y="52" fill="#00cec9" font-size="7" text-anchor="middle">Expert 1</text>
+          <rect x="100" y="30" width="70" height="35" rx="6" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="135" y="52" fill="#00cec9" font-size="7" text-anchor="middle">Expert 2</text>
+          <rect x="180" y="30" width="70" height="35" rx="6" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="215" y="52" fill="#00cec9" font-size="7" text-anchor="middle">Expert K</text>
+          <!-- Gate -->
+          <rect x="270" y="30" width="110" height="35" rx="6" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="325" y="45" fill="#fdcb6e" font-size="7" text-anchor="middle">Gating Network</text>
+          <text x="325" y="58" fill="#888" font-size="6" text-anchor="middle">g(x) = softmax(W_g x)</text>
+        </g>
+        <!-- Stacked variant -->
+        <g transform="translate(20,295)">
+          <rect x="0" y="0" width="195" height="45" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="97" y="16" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle">Stacked 模式</text>
+          <text x="97" y="34" fill="#888" font-size="8" text-anchor="middle">CrossNet -> DNN (串联)</text>
+        </g>
+        <g transform="translate(225,295)">
+          <rect x="0" y="0" width="195" height="45" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="97" y="16" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle">Parallel 模式</text>
+          <text x="97" y="34" fill="#888" font-size="8" text-anchor="middle">CrossNet || DNN (并联)</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">DCN-V2: 矩阵交叉 + 专家混合 (Google, 2020)</h3>
+      <p><strong>核心改进:</strong> 将 DCN 交叉层的向量 w 替换为矩阵 W，打破 rank-1 限制。</p>
+      <div class="formula formula-cyan">DCN v1: x_{l+1} = x₀ * (x_l^T w_l) + b_l + x_l<br>                  &uarr; 标量 (rank-1)<br><br>DCN-V2: x_{l+1} = x₀ . (W_l x_l + b_l) + x_l<br>                  &uarr; d维向量 (full-rank)<br>. = Hadamard product (逐元素乘)</div>
+      <p><strong style="color:var(--cyan)">关键改进:</strong></p>
+      <p>- <strong>矩阵替代向量:</strong> W_l 是 d x d 矩阵，表达能力大幅提升</p>
+      <p>- <strong>MoE 变体:</strong> 多个专家的交叉层通过 Gating 加权组合，进一步提升容量</p>
+      <p>- <strong>Stacked / Parallel:</strong> 支持串联和并联两种组合模式</p>
+      <p><strong style="color:#e17055">参数开销:</strong> d x d 矩阵参数量较大，可通过低秩分解 W = U * V^T 缓解。</p>
+      <div class="tags">
+        <span>矩阵交叉</span>
+        <span>Full-rank</span>
+        <span>MoE 变体</span>
+        <span>低秩分解</span>
+        <span>Stacked/Parallel</span>
+      </div>
+      <div class="key key-cyan"><strong>DCN-V2 是 Cross Network 的成熟形态。</strong> 矩阵交叉解决了 DCN v1 的 rank-1 瓶颈，MoE 变体进一步增强了模型容量。在 Google 内部大规模生产系统中验证有效。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     10. AutoInt
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="autoint">
+  <div class="section-header">
+    <div class="section-num sn-blue">10</div>
+    <div class="section-title">AutoInt — Automatic Feature Interaction (2019)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">AutoInt: 多头自注意力特征交互</text>
+        <!-- Input embeddings -->
+        <g transform="translate(20,295)">
+          <rect x="0" y="0" width="400" height="40" rx="8" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width="1"/>
+          <text x="200" y="18" fill="#74b9ff" font-size="10" font-weight="bold" text-anchor="middle">Field Embeddings</text>
+          <text x="200" y="34" fill="#888" font-size="8" text-anchor="middle">e1, e2, ..., em (每个 field 一个 embedding)</text>
+        </g>
+        <!-- Self-Attention Layer -->
+        <g transform="translate(20,130)">
+          <rect x="0" y="0" width="400" height="140" rx="12" fill="rgba(116,185,255,.04)" stroke="#74b9ff" stroke-width="1.5"/>
+          <text x="200" y="22" fill="#74b9ff" font-size="10" font-weight="bold" text-anchor="middle">Multi-Head Self-Attention Layers</text>
+          <!-- Q K V -->
+          <rect x="20" y="38" width="100" height="30" rx="6" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+          <text x="70" y="57" fill="#74b9ff" font-size="8" text-anchor="middle">Q = e_m W_Q</text>
+          <rect x="140" y="38" width="100" height="30" rx="6" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+          <text x="190" y="57" fill="#74b9ff" font-size="8" text-anchor="middle">K = e_m W_K</text>
+          <rect x="260" y="38" width="100" height="30" rx="6" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+          <text x="310" y="57" fill="#74b9ff" font-size="8" text-anchor="middle">V = e_m W_V</text>
+          <!-- Attention weights -->
+          <rect x="60" y="80" width="280" height="30" rx="6" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width=".8"/>
+          <text x="200" y="100" fill="#74b9ff" font-size="8" text-anchor="middle">alpha_{m,k} = softmax(Q_m^T K_k / sqrt(d'))</text>
+          <!-- Output -->
+          <text x="200" y="130" fill="#888" font-size="8" text-anchor="middle">e_m' = Sum_k alpha_{m,k} V_k  (聚合所有 field 的信息)</text>
+        </g>
+        <!-- Residual -->
+        <g transform="translate(30,98)">
+          <rect x="0" y="0" width="120" height="22" rx="5" fill="rgba(85,239,196,.08)" stroke="#55efc4" stroke-width="1"/>
+          <text x="60" y="15" fill="#55efc4" font-size="8" text-anchor="middle">+ Residual Connection</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(100,42)">
+          <rect x="0" y="0" width="240" height="40" rx="10" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width="1.5"/>
+          <text x="120" y="16" fill="#74b9ff" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+          <text x="120" y="34" fill="#888" font-size="9" text-anchor="middle">y = sigma(w^T concat(e1', e2', ..., em'))</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="220" y1="295" x2="220" y2="270" stroke="#888" stroke-width="1" opacity=".4"/>
+        <line x1="220" y1="130" x2="220" y2="82" stroke="#888" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-blue">AutoInt: 自注意力驱动的特征交互 (2019)</h3>
+      <p><strong>核心思想:</strong> 用 Transformer 的多头自注意力机制 (Multi-Head Self-Attention) 来自动学习特征之间的交互关系。</p>
+      <div class="formula formula-blue">Attention(Q, K, V):<br>alpha_{m,k} = softmax(Q_m^T K_k / sqrt(d'))<br>e_m' = Sum_k alpha_{m,k} V_k<br><br>Q = e W_Q,  K = e W_K,  V = e W_V</div>
+      <p><strong style="color:var(--blue)">关键创新:</strong></p>
+      <p>- 每个 field 的 embedding 通过注意力机制聚合其他所有 field 的信息</p>
+      <p>- 注意力权重 alpha 自动学习哪些特征对交互更重要</p>
+      <p>- 多层叠加可以捕捉高阶交互</p>
+      <p>- 残差连接保留原始信息</p>
+      <p><strong style="color:var(--blue)">可解释性:</strong> 注意力权重提供了特征交互的可视化解释。</p>
+      <div class="tags">
+        <span>Multi-Head Attention</span>
+        <span>自动特征交互</span>
+        <span>可解释性</span>
+        <span>Residual</span>
+        <span>Transformer 式</span>
+      </div>
+      <div class="key key-blue"><strong>AutoInt 的独特价值:</strong> 将 Transformer 的自注意力引入 CTR 预估，开启了注意力机制在特征交互中的应用。注意力权重提供了比 DNN 更好的可解释性。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     11. FiBiNET
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="fibinet">
+  <div class="section-header">
+    <div class="section-num sn-blue">11</div>
+    <div class="section-title">FiBiNET — Feature Importance and Bilinear (2019)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">FiBiNET 架构 (2019)</text>
+        <!-- Input -->
+        <g transform="translate(20,300)">
+          <rect x="0" y="0" width="400" height="35" rx="8" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width="1"/>
+          <text x="200" y="22" fill="#74b9ff" font-size="10" text-anchor="middle">Field Embeddings: e1, e2, ..., em</text>
+        </g>
+        <!-- SENET -->
+        <g transform="translate(20,195)">
+          <rect x="0" y="0" width="185" height="80" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="92" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">SENET Layer</text>
+          <text x="92" y="38" fill="#888" font-size="8" text-anchor="middle">Squeeze: pooling per field</text>
+          <text x="92" y="52" fill="#888" font-size="8" text-anchor="middle">Excitation: FC -> sigmoid</text>
+          <text x="92" y="68" fill="#fdcb6e" font-size="8" text-anchor="middle">Field importance weighting</text>
+        </g>
+        <!-- Bilinear -->
+        <g transform="translate(220,195)">
+          <rect x="0" y="0" width="200" height="80" rx="10" fill="rgba(116,185,255,.04)" stroke="#74b9ff" stroke-width="1.5"/>
+          <text x="100" y="18" fill="#74b9ff" font-size="10" font-weight="bold" text-anchor="middle">Bilinear Interaction</text>
+          <text x="100" y="40" fill="#74b9ff" font-size="8" text-anchor="middle">p_ij = e_i . W . e_j</text>
+          <text x="100" y="56" fill="#888" font-size="8" text-anchor="middle">W: learnable d x d matrix</text>
+          <text x="100" y="72" fill="#888" font-size="8" text-anchor="middle">比内积更强的交互</text>
+        </g>
+        <!-- DNN -->
+        <g transform="translate(80,100)">
+          <rect x="0" y="0" width="280" height="65" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="140" y="18" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">DNN Layers</text>
+          <rect x="20" y="28" width="240" height="12" rx="3" fill="#6c5ce7" opacity=".12"/>
+          <rect x="30" y="44" width="220" height="12" rx="3" fill="#6c5ce7" opacity=".18"/>
+        </g>
+        <!-- Output -->
+        <g transform="translate(130,40)">
+          <rect x="0" y="0" width="180" height="35" rx="8" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width="1.5"/>
+          <text x="90" y="22" fill="#74b9ff" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="112" y1="195" x2="160" y2="165" stroke="#fdcb6e" stroke-width="1" opacity=".4"/>
+        <line x1="320" y1="195" x2="280" y2="165" stroke="#74b9ff" stroke-width="1" opacity=".4"/>
+        <line x1="220" y1="100" x2="220" y2="75" stroke="#888" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-blue">FiBiNET: SENET + 双线性交互 (2019)</h3>
+      <p>FiBiNET 从两个维度增强特征交互:</p>
+      <div class="formula formula-blue">1. SENET: 自适应 field 重要性<br>   s = Squeeze(E), a = Excitation(s)<br>   E' = a . E  (按 field 加权)<br><br>2. Bilinear: p_ij = e_i^T W e_j<br>   W 是可学习矩阵，比内积更灵活</div>
+      <p><strong style="color:var(--gold)">SENET Layer (Squeeze-and-Excitation):</strong></p>
+      <p>- 借鉴 CV 中的 SENet 思想</p>
+      <p>- Squeeze: 对每个 field embedding 做 pooling 压缩为标量</p>
+      <p>- Excitation: FC + sigmoid 生成 field 级别的重要性权重</p>
+      <p>- 自适应地放大重要 field、抑制噪声 field</p>
+      <p><strong style="color:var(--blue)">Bilinear Interaction:</strong></p>
+      <p>- 用可学习矩阵 W 代替简单内积: p_ij = e_i^T W e_j</p>
+      <p>- 三种变体: field-all (共享 W), field-each (每对 field 独立 W), field-interaction (每种交互类型一个 W)</p>
+      <div class="tags">
+        <span>SENET</span>
+        <span>Bilinear Interaction</span>
+        <span>Field Importance</span>
+        <span>自适应加权</span>
+      </div>
+      <div class="key key-blue"><strong>FiBiNET 的创新:</strong> 同时解决了「哪些 field 重要」(SENET) 和「field 之间如何交互」(Bilinear) 两个问题。SENET 的 field 重要性动态调整是其独特贡献。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     12. DLRM
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="dlrm">
+  <div class="section-header">
+    <div class="section-num sn-pink">12</div>
+    <div class="section-title">DLRM — Deep Learning Recommendation Model (2019, Meta)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DLRM 架构 (Meta, 2019)</text>
+        <!-- Dense features -->
+        <g transform="translate(20,310)">
+          <rect x="0" y="0" width="160" height="45" rx="8" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="80" y="16" fill="#fd79a8" font-size="9" font-weight="bold" text-anchor="middle">Dense Features</text>
+          <text x="80" y="34" fill="#888" font-size="8" text-anchor="middle">连续值 (年龄, 价格 ...)</text>
+        </g>
+        <!-- Sparse features -->
+        <g transform="translate(200,310)">
+          <rect x="0" y="0" width="220" height="45" rx="8" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="110" y="16" fill="#fd79a8" font-size="9" font-weight="bold" text-anchor="middle">Sparse Features</text>
+          <text x="110" y="34" fill="#888" font-size="8" text-anchor="middle">类别型 (UserID, ItemID ...)</text>
+        </g>
+        <!-- Bottom MLP -->
+        <g transform="translate(20,225)">
+          <rect x="0" y="0" width="160" height="60" rx="10" fill="rgba(253,121,168,.04)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="80" y="18" fill="#fd79a8" font-size="9" font-weight="bold" text-anchor="middle">Bottom MLP</text>
+          <rect x="15" y="28" width="130" height="10" rx="3" fill="#fd79a8" opacity=".12"/>
+          <rect x="25" y="42" width="110" height="10" rx="3" fill="#fd79a8" opacity=".18"/>
+          <text x="80" y="58" fill="#888" font-size="7" text-anchor="middle">Dense -> same dim as emb</text>
+        </g>
+        <!-- Embedding tables -->
+        <g transform="translate(200,225)">
+          <rect x="0" y="0" width="220" height="60" rx="10" fill="rgba(253,121,168,.04)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="110" y="18" fill="#fd79a8" font-size="9" font-weight="bold" text-anchor="middle">Embedding Tables</text>
+          <rect x="12" y="28" width="30" height="22" rx="3" fill="#fd79a8" opacity=".15"/>
+          <rect x="48" y="28" width="30" height="22" rx="3" fill="#fd79a8" opacity=".15"/>
+          <rect x="84" y="28" width="30" height="22" rx="3" fill="#fd79a8" opacity=".15"/>
+          <rect x="120" y="28" width="30" height="22" rx="3" fill="#fd79a8" opacity=".15"/>
+          <text x="170" y="42" fill="#888" font-size="7">...</text>
+        </g>
+        <!-- Interaction layer -->
+        <g transform="translate(40,140)">
+          <rect x="0" y="0" width="360" height="60" rx="10" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="180" y="18" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Feature Interaction: Dot Product</text>
+          <text x="180" y="38" fill="#fd79a8" font-size="9" text-anchor="middle">z_ij = &lt;e_i, e_j&gt; for all pairs (i,j)</text>
+          <text x="180" y="53" fill="#888" font-size="8" text-anchor="middle">底层 MLP 输出也参与交互!</text>
+        </g>
+        <!-- Top MLP -->
+        <g transform="translate(100,60)">
+          <rect x="0" y="0" width="240" height="55" rx="10" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="120" y="18" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Top MLP -> Output</text>
+          <rect x="20" y="28" width="200" height="10" rx="3" fill="#fd79a8" opacity=".12"/>
+          <rect x="40" y="42" width="160" height="10" rx="3" fill="#fd79a8" opacity=".18"/>
+        </g>
+        <!-- Arrows -->
+        <line x1="100" y1="225" x2="140" y2="200" stroke="#fd79a8" stroke-width="1" opacity=".4"/>
+        <line x1="310" y1="225" x2="280" y2="200" stroke="#fd79a8" stroke-width="1" opacity=".4"/>
+        <line x1="220" y1="140" x2="220" y2="115" stroke="#888" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">DLRM: Meta 的工业级推荐模型 (2019)</h3>
+      <p><strong>设计哲学:</strong> 面向工业规模部署，架构简洁高效，强调 Embedding 表的并行化。</p>
+      <div class="formula formula-pink">Architecture:<br>1. Dense features -> Bottom MLP -> d-dim vector<br>2. Sparse features -> Embedding Lookup -> d-dim vectors<br>3. All d-dim vectors -> Pairwise Dot Product<br>4. concat(dot products, dense_out) -> Top MLP -> y</div>
+      <p><strong style="color:var(--pink)">关键设计:</strong></p>
+      <p>- <strong>Bottom MLP:</strong> 将连续特征映射到与 embedding 相同的维度空间</p>
+      <p>- <strong>Dot Product 交互:</strong> 所有 embedding (包括 Bottom MLP 输出) 之间的两两内积</p>
+      <p>- <strong>Top MLP:</strong> 将交互结果映射到预测值</p>
+      <p>- <strong>工业优化:</strong> Embedding 表分布在多 GPU/多机上，通信模式高度优化</p>
+      <div class="tags">
+        <span>Meta 工业级</span>
+        <span>Embedding 并行</span>
+        <span>Bottom/Top MLP</span>
+        <span>Dot Product 交互</span>
+        <span>分布式训练</span>
+      </div>
+      <div class="key key-pink"><strong>DLRM 的工业意义:</strong> 不追求最复杂的交互机制，而是在简洁的架构下实现极致的工程效率。其 Embedding 分布式并行方案成为大规模推荐系统的工程标准。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     13. MMCN
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="mmcn">
+  <div class="section-header">
+    <div class="section-num sn-cyan">13</div>
+    <div class="section-title">MMCN — Multi-Head Multi-Layer Cross Network</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">MMCN: 多头交叉层</text>
+        <!-- DCN-V2 single head -->
+        <g transform="translate(20,50)">
+          <rect x="0" y="0" width="185" height="100" rx="10" fill="rgba(0,206,201,.03)" stroke="#00cec9" stroke-width="1" stroke-dasharray="4"/>
+          <text x="92" y="20" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle" opacity=".5">DCN-V2: 单头</text>
+          <rect x="15" y="35" width="155" height="25" rx="5" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width=".5"/>
+          <text x="92" y="52" fill="#888" font-size="8" text-anchor="middle">一个大的 W (d x d)</text>
+          <text x="92" y="80" fill="#888" font-size="8" text-anchor="middle">单一交叉子空间</text>
+        </g>
+        <!-- MMCN multi head -->
+        <g transform="translate(220,50)">
+          <rect x="0" y="0" width="200" height="100" rx="10" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="100" y="20" fill="#00cec9" font-size="9" font-weight="bold" text-anchor="middle">MMCN: 多头</text>
+          <rect x="10" y="35" width="42" height="25" rx="5" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="31" y="52" fill="#00cec9" font-size="7" text-anchor="middle">W₁</text>
+          <rect x="58" y="35" width="42" height="25" rx="5" fill="rgba(0,206,201,.12)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="79" y="52" fill="#00cec9" font-size="7" text-anchor="middle">W₂</text>
+          <rect x="106" y="35" width="42" height="25" rx="5" fill="rgba(0,206,201,.14)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="127" y="52" fill="#00cec9" font-size="7" text-anchor="middle">W₃</text>
+          <rect x="154" y="35" width="36" height="25" rx="5" fill="rgba(0,206,201,.16)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="172" y="52" fill="#888" font-size="7" text-anchor="middle">...</text>
+          <text x="100" y="82" fill="#00cec9" font-size="8" text-anchor="middle">多个交叉子空间!</text>
+        </g>
+        <!-- Multi-layer stack -->
+        <g transform="translate(40,175)">
+          <rect x="0" y="0" width="360" height="140" rx="12" fill="rgba(0,206,201,.03)" stroke="#00cec9" stroke-width="1"/>
+          <text x="180" y="20" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">Multi-Head Cross Layer Stack</text>
+          <!-- Layer 1 -->
+          <g transform="translate(15,32)">
+            <rect x="0" y="0" width="330" height="28" rx="5" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width=".8"/>
+            <rect x="5" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".12"/>
+            <text x="35" y="17" fill="#888" font-size="6" text-anchor="middle">Head 1</text>
+            <rect x="70" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".12"/>
+            <text x="100" y="17" fill="#888" font-size="6" text-anchor="middle">Head 2</text>
+            <rect x="135" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".12"/>
+            <text x="165" y="17" fill="#888" font-size="6" text-anchor="middle">Head H</text>
+            <text x="230" y="17" fill="#00cec9" font-size="7">Layer 1 -> concat -> proj</text>
+          </g>
+          <!-- Layer 2 -->
+          <g transform="translate(15,68)">
+            <rect x="0" y="0" width="330" height="28" rx="5" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+            <rect x="5" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".15"/>
+            <rect x="70" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".15"/>
+            <rect x="135" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".15"/>
+            <text x="230" y="17" fill="#00cec9" font-size="7">Layer 2 -> concat -> proj</text>
+          </g>
+          <!-- Layer L -->
+          <g transform="translate(15,104)">
+            <rect x="0" y="0" width="330" height="28" rx="5" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+            <rect x="5" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".18"/>
+            <rect x="70" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".18"/>
+            <rect x="135" y="4" width="60" height="20" rx="3" fill="#00cec9" opacity=".18"/>
+            <text x="230" y="17" fill="#00cec9" font-size="7">Layer L -> concat -> proj</text>
+          </g>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">MMCN: 多头交叉 = 多子空间显式交互</h3>
+      <p><strong>核心思想:</strong> 借鉴 Transformer 的多头注意力思想，在 Cross Layer 中引入多个独立的交叉头 (heads)。</p>
+      <div class="formula formula-cyan">Multi-Head Cross Layer:<br>head_h = x₀ . (W_h x_l + b_h) + x_l<br>x_{l+1} = concat(head_1, ..., head_H) W_proj<br><br>每个头在不同的子空间中学习交叉模式</div>
+      <p><strong style="color:var(--cyan)">解决的问题:</strong> DCN-V2 中每层只有一个 W 矩阵，所有交互在同一个子空间。MMCN 将交互分散到多个子空间，每个头捕捉不同类型的交叉模式。</p>
+      <p><strong style="color:var(--cyan)">关键优势:</strong></p>
+      <p>- 更丰富的交叉表达 (多子空间)</p>
+      <p>- 类似多头注意力的分而治之策略</p>
+      <p>- 每个头可以用较小的 W，总参数量可控</p>
+      <div class="tags">
+        <span>Multi-Head</span>
+        <span>多子空间交叉</span>
+        <span>DCN-V2 扩展</span>
+        <span>投影层聚合</span>
+      </div>
+      <div class="key key-cyan"><strong>MMCN = Multi-Head DCN-V2。</strong> 多头机制让模型在不同子空间中独立学习特征交叉模式，然后通过投影层聚合。这是 Cross Network 向更强表达能力演进的自然方向。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     14. DHEN
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="dhen">
+  <div class="section-header">
+    <div class="section-num sn-pink">14</div>
+    <div class="section-title">DHEN — Deep Hierarchical Ensemble Network (2022, Meta)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DHEN 架构 (Meta, 2022)</text>
+        <!-- Input -->
+        <g transform="translate(20,325)">
+          <rect x="0" y="0" width="400" height="35" rx="8" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="200" y="22" fill="#fd79a8" font-size="10" text-anchor="middle">DLRM Base Embeddings + Dense Features</text>
+        </g>
+        <!-- Hierarchical ensemble layers -->
+        <g transform="translate(20,80)">
+          <rect x="0" y="0" width="400" height="220" rx="12" fill="rgba(253,121,168,.03)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="200" y="22" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Hierarchical Ensemble (L layers)</text>
+          <!-- Layer 1 -->
+          <g transform="translate(10,35)">
+            <text x="0" y="10" fill="#fd79a8" font-size="8" font-weight="bold">Layer 1:</text>
+            <rect x="70" y="0" width="65" height="28" rx="5" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+            <text x="102" y="18" fill="#00cec9" font-size="7" text-anchor="middle">CrossNet</text>
+            <rect x="142" y="0" width="65" height="28" rx="5" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+            <text x="174" y="18" fill="#74b9ff" font-size="7" text-anchor="middle">Attention</text>
+            <rect x="214" y="0" width="50" height="28" rx="5" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width=".8"/>
+            <text x="239" y="18" fill="#6c5ce7" font-size="7" text-anchor="middle">MLP</text>
+            <rect x="271" y="0" width="55" height="28" rx="5" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width=".8"/>
+            <text x="298" y="18" fill="#fdcb6e" font-size="7" text-anchor="middle">Linear</text>
+            <text x="350" y="18" fill="#888" font-size="7">-> cat</text>
+          </g>
+          <!-- Layer 2 -->
+          <g transform="translate(10,78)">
+            <text x="0" y="10" fill="#fd79a8" font-size="8" font-weight="bold">Layer 2:</text>
+            <rect x="70" y="0" width="50" height="28" rx="5" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width=".8"/>
+            <text x="95" y="18" fill="#6c5ce7" font-size="7" text-anchor="middle">MLP</text>
+            <rect x="127" y="0" width="65" height="28" rx="5" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width=".8"/>
+            <text x="159" y="18" fill="#00cec9" font-size="7" text-anchor="middle">CrossNet</text>
+            <rect x="199" y="0" width="65" height="28" rx="5" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+            <text x="231" y="18" fill="#74b9ff" font-size="7" text-anchor="middle">Attention</text>
+            <text x="290" y="18" fill="#888" font-size="7">-> cat</text>
+          </g>
+          <!-- Layer L -->
+          <g transform="translate(10,121)">
+            <text x="0" y="10" fill="#fd79a8" font-size="8" font-weight="bold">Layer L:</text>
+            <rect x="70" y="0" width="65" height="28" rx="5" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width=".8"/>
+            <text x="102" y="18" fill="#74b9ff" font-size="7" text-anchor="middle">Attention</text>
+            <rect x="142" y="0" width="55" height="28" rx="5" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width=".8"/>
+            <text x="169" y="18" fill="#fdcb6e" font-size="7" text-anchor="middle">Linear</text>
+            <text x="220" y="18" fill="#888" font-size="7">-> cat</text>
+          </g>
+          <!-- Key insight -->
+          <rect x="10" y="160" width="380" height="48" rx="8" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="200" y="178" fill="#fd79a8" font-size="9" text-anchor="middle" font-weight="bold">每层的交互算子类型和数量均可不同 (heterogeneous)</text>
+          <text x="200" y="196" fill="#888" font-size="8" text-anchor="middle">可插拔模块: CrossNet, Self-Attention, MLP, Linear, DLRM Dot, ...</text>
+        </g>
+        <!-- Output -->
+        <g transform="translate(110,35)">
+          <rect x="0" y="0" width="220" height="32" rx="8" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="110" y="21" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">Output</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">DHEN: 异构算子的层次化集成 (Meta, 2022)</h3>
+      <p><strong>核心思想:</strong> 不再固定用一种交互机制 (如只用 CrossNet 或只用 Attention)，而是在每一层中组合多种<strong>异构</strong>交互算子。</p>
+      <div class="formula formula-pink">Layer l: x_{l+1} = concat(<br>  CrossNet(x_l),<br>  SelfAttention(x_l),<br>  MLP(x_l),<br>  Linear(x_l),<br>  ...  // 可插拔<br>) * W_proj</div>
+      <p><strong style="color:var(--pink)">关键创新:</strong></p>
+      <p>- <strong>异构 (Heterogeneous):</strong> 每层可以包含 CrossNet + Attention + MLP + Linear 等不同类型的算子</p>
+      <p>- <strong>层次化 (Hierarchical):</strong> 多层叠加，上层的输入是下层所有算子的联合输出</p>
+      <p>- <strong>可插拔 (Pluggable):</strong> 可以灵活配置每层使用哪些算子、多少个</p>
+      <p><strong style="color:var(--pink)">工业验证:</strong> 在 Meta 的广告推荐系统中取得显著收益。</p>
+      <div class="tags">
+        <span>Meta 2022</span>
+        <span>异构算子</span>
+        <span>层次化集成</span>
+        <span>可插拔模块</span>
+        <span>CrossNet+Attn+MLP</span>
+      </div>
+      <div class="key key-pink"><strong>DHEN 代表了 CTR 模型的集大成方向:</strong> 与其争论哪种交互机制最好 (CrossNet? Attention? MLP?)，不如把它们全部组合起来，让模型自己学习最优的组合方式。这是「ensemble of interaction operators」的终极形态。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     15. LHUC
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="lhuc">
+  <div class="section-header">
+    <div class="section-num sn-green">15</div>
+    <div class="section-title">LHUC — Learning Hidden Unit Contributions</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">LHUC: Per-user 隐层缩放</text>
+        <!-- Standard DNN layer -->
+        <g transform="translate(20,50)">
+          <rect x="0" y="0" width="185" height="160" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1" stroke-dasharray="4"/>
+          <text x="92" y="20" fill="#6c5ce7" font-size="9" font-weight="bold" text-anchor="middle" opacity=".5">Standard DNN</text>
+          <!-- Neurons -->
+          <circle cx="40" cy="60" r="12" fill="rgba(108,92,231,.1)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="40" y="64" fill="#888" font-size="7" text-anchor="middle">h₁</text>
+          <circle cx="92" cy="60" r="12" fill="rgba(108,92,231,.1)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="92" y="64" fill="#888" font-size="7" text-anchor="middle">h₂</text>
+          <circle cx="144" cy="60" r="12" fill="rgba(108,92,231,.1)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="144" y="64" fill="#888" font-size="7" text-anchor="middle">h₃</text>
+          <text x="92" y="100" fill="#888" font-size="8" text-anchor="middle">所有用户共享</text>
+          <text x="92" y="118" fill="#888" font-size="8" text-anchor="middle">相同的隐层激活</text>
+          <text x="92" y="150" fill="#e17055" font-size="8" text-anchor="middle">无个性化!</text>
+        </g>
+        <!-- LHUC DNN layer -->
+        <g transform="translate(225,50)">
+          <rect x="0" y="0" width="195" height="160" rx="10" fill="rgba(85,239,196,.05)" stroke="#55efc4" stroke-width="1.5"/>
+          <text x="97" y="20" fill="#55efc4" font-size="9" font-weight="bold" text-anchor="middle">LHUC: Per-user Scaling</text>
+          <!-- Neurons with scaling -->
+          <circle cx="40" cy="60" r="12" fill="rgba(85,239,196,.15)" stroke="#55efc4" stroke-width="1.5"/>
+          <text x="40" y="58" fill="#55efc4" font-size="7" text-anchor="middle">h₁</text>
+          <text x="40" y="68" fill="#55efc4" font-size="6" text-anchor="middle">x s₁</text>
+          <circle cx="97" cy="60" r="12" fill="rgba(85,239,196,.15)" stroke="#55efc4" stroke-width="1.5"/>
+          <text x="97" y="58" fill="#55efc4" font-size="7" text-anchor="middle">h₂</text>
+          <text x="97" y="68" fill="#55efc4" font-size="6" text-anchor="middle">x s₂</text>
+          <circle cx="154" cy="60" r="12" fill="rgba(85,239,196,.15)" stroke="#55efc4" stroke-width="1.5"/>
+          <text x="154" y="58" fill="#55efc4" font-size="7" text-anchor="middle">h₃</text>
+          <text x="154" y="68" fill="#55efc4" font-size="6" text-anchor="middle">x s₃</text>
+          <!-- User-specific r -->
+          <rect x="20" y="88" width="155" height="30" rx="6" fill="rgba(85,239,196,.08)" stroke="#55efc4" stroke-width=".8"/>
+          <text x="97" y="100" fill="#55efc4" font-size="8" text-anchor="middle">s = 2*sigma(r_user)</text>
+          <text x="97" y="112" fill="#888" font-size="7" text-anchor="middle">r_user: per-user 可学习参数</text>
+          <text x="97" y="140" fill="#55efc4" font-size="8" text-anchor="middle">h' = 2*sigma(r) . h</text>
+          <text x="97" y="155" fill="#55efc4" font-size="7" text-anchor="middle">per-user 个性化!</text>
+        </g>
+        <!-- Detailed formula -->
+        <g transform="translate(20,230)">
+          <rect x="0" y="0" width="400" height="65" rx="10" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+          <text x="200" y="18" fill="#55efc4" font-size="10" font-weight="bold" text-anchor="middle">LHUC 核心公式</text>
+          <text x="200" y="38" fill="#55efc4" font-size="10" text-anchor="middle">h' = 2*sigma(r_u) . h</text>
+          <text x="200" y="55" fill="#888" font-size="8" text-anchor="middle">2*sigma(r) -> (0, 2): 可以放大或缩小隐层单元，恒正</text>
+        </g>
+        <!-- Origin -->
+        <g transform="translate(20,310)">
+          <rect x="0" y="0" width="400" height="55" rx="10" fill="rgba(85,239,196,.03)" stroke="#55efc4" stroke-width="1"/>
+          <text x="200" y="18" fill="#55efc4" font-size="9" font-weight="bold" text-anchor="middle">起源: 语音识别 (Swietojanski & Renals, 2014)</text>
+          <text x="200" y="38" fill="#888" font-size="8" text-anchor="middle">原始用途: per-speaker 适配，让模型适应不同说话人的声学特征</text>
+          <text x="200" y="52" fill="#888" font-size="8" text-anchor="middle">推荐系统适配: per-user 适配，让模型适应不同用户的行为模式</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-green">LHUC: 模型个性化而非特征交互 (Swietojanski & Renals, 2014)</h3>
+      <p><strong style="color:var(--green)">重要区分:</strong> LHUC 不是特征交互模型，而是<strong>模型个性化/适配</strong>技术。它位于演进的另一条轴上。</p>
+      <div class="formula formula-green">h' = 2 * sigma(r_u) . h<br><br>- h: DNN 隐层激活 (共享模型)<br>- r_u: per-user 可学习参数向量<br>- sigma: sigmoid 函数<br>- 2*sigma(r): 值域 (0, 2)，可放大或缩小<br>- .: Hadamard product (逐元素乘)</div>
+      <p><strong style="color:var(--green)">核心机制:</strong></p>
+      <p>- 为每个用户维护一组额外参数 r_u (维度 = 隐层宽度)</p>
+      <p>- 通过 2*sigma(r_u) 生成 per-user 的缩放因子 (值域 0 到 2)</p>
+      <p>- 逐元素缩放共享模型的隐层激活: 放大对该用户重要的特征通道，抑制不相关的</p>
+      <p><strong>起源:</strong> 来自语音识别的 speaker adaptation (说话人适配)，被借鉴到推荐系统实现 user adaptation。</p>
+      <div class="tags">
+        <span>模型个性化</span>
+        <span>Per-user 缩放</span>
+        <span>语音识别起源</span>
+        <span>参数高效</span>
+        <span>Hadamard Scaling</span>
+        <span>非特征交互</span>
+      </div>
+      <div class="key key-green"><strong>LHUC 的独特定位:</strong> 它不改变特征交互的方式，而是在共享模型的基础上，用极少的 per-user 参数实现个性化适配。可以叠加在任何 CTR 模型之上 (DeepFM+LHUC, DCN+LHUC 等)。这代表了 CTR 演进的第二条主轴: 模型个性化。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     EVOLUTION AXES
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="axes">
+  <div class="section-header">
+    <div class="section-num sn-gold">*</div>
+    <div class="section-title">两条演进主轴</div>
+  </div>
+  <div class="wide-card">
+    <h3 style="color:var(--gold)">CTR 模型演进的双轴框架</h3>
+    <p>CTR 预估模型的演进可以沿两条正交的主轴理解:</p>
+    <svg viewBox="0 0 800 360" xmlns="http://www.w3.org/2000/svg" style="width:100%;max-width:800px;margin:1rem auto;display:block;">
+      <!-- Axes -->
+      <line x1="80" y1="300" x2="750" y2="300" stroke="#fdcb6e" stroke-width="2"/>
+      <line x1="80" y1="300" x2="80" y2="30" stroke="#55efc4" stroke-width="2"/>
+      <text x="420" y="340" fill="#fdcb6e" font-size="12" text-anchor="middle" font-weight="bold">主轴 1: 特征交互建模 (Feature Interaction)</text>
+      <text x="30" y="165" fill="#55efc4" font-size="11" text-anchor="middle" font-weight="bold" transform="rotate(-90,30,165)">主轴 2: 模型个性化 (Personalization)</text>
+      <!-- Axis labels -->
+      <text x="120" y="320" fill="#888" font-size="8">无交互</text>
+      <text x="700" y="320" fill="#888" font-size="8">异构集成</text>
+      <text x="95" y="290" fill="#888" font-size="8">共享</text>
+      <text x="95" y="50" fill="#888" font-size="8">Per-user</text>
+      <!-- Axis 1 models -->
+      <circle cx="130" cy="280" r="16" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+      <text x="130" y="284" fill="#fdcb6e" font-size="7" text-anchor="middle">LR</text>
+      <circle cx="200" cy="275" r="16" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+      <text x="200" y="279" fill="#fdcb6e" font-size="7" text-anchor="middle">POLY2</text>
+      <circle cx="280" cy="270" r="18" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+      <text x="280" y="274" fill="#fdcb6e" font-size="7" text-anchor="middle">FM</text>
+      <circle cx="340" cy="265" r="15" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+      <text x="340" y="269" fill="#fdcb6e" font-size="6" text-anchor="middle">FFM</text>
+      <circle cx="400" cy="255" r="18" fill="rgba(108,92,231,.15)" stroke="#6c5ce7" stroke-width="1.5"/>
+      <text x="400" y="252" fill="#6c5ce7" font-size="6" text-anchor="middle">Wide&</text>
+      <text x="400" y="262" fill="#6c5ce7" font-size="6" text-anchor="middle">Deep</text>
+      <circle cx="460" cy="248" r="18" fill="rgba(108,92,231,.15)" stroke="#6c5ce7" stroke-width="1.5"/>
+      <text x="460" y="252" fill="#6c5ce7" font-size="7" text-anchor="middle">DeepFM</text>
+      <circle cx="510" cy="240" r="16" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1.5"/>
+      <text x="510" y="244" fill="#00cec9" font-size="7" text-anchor="middle">DCN</text>
+      <circle cx="560" cy="232" r="16" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1.5"/>
+      <text x="560" y="236" fill="#00cec9" font-size="6" text-anchor="middle">xDeepFM</text>
+      <circle cx="610" cy="225" r="16" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1.5"/>
+      <text x="610" y="229" fill="#00cec9" font-size="7" text-anchor="middle">DCN-V2</text>
+      <circle cx="660" cy="218" r="16" fill="rgba(253,121,168,.15)" stroke="#fd79a8" stroke-width="1.5"/>
+      <text x="660" y="222" fill="#fd79a8" font-size="7" text-anchor="middle">DHEN</text>
+      <!-- Other models -->
+      <circle cx="530" cy="250" r="14" fill="rgba(116,185,255,.12)" stroke="#74b9ff" stroke-width="1"/>
+      <text x="530" y="254" fill="#74b9ff" font-size="6" text-anchor="middle">AutoInt</text>
+      <circle cx="490" cy="258" r="14" fill="rgba(116,185,255,.12)" stroke="#74b9ff" stroke-width="1"/>
+      <text x="490" y="262" fill="#74b9ff" font-size="6" text-anchor="middle">FiBiNET</text>
+      <circle cx="550" cy="260" r="14" fill="rgba(253,121,168,.12)" stroke="#fd79a8" stroke-width="1"/>
+      <text x="550" y="264" fill="#fd79a8" font-size="6" text-anchor="middle">DLRM</text>
+      <circle cx="580" cy="242" r="14" fill="rgba(0,206,201,.12)" stroke="#00cec9" stroke-width="1"/>
+      <text x="580" y="246" fill="#00cec9" font-size="6" text-anchor="middle">MMCN</text>
+      <!-- Axis 2: LHUC -->
+      <circle cx="460" cy="120" r="22" fill="rgba(85,239,196,.15)" stroke="#55efc4" stroke-width="2"/>
+      <text x="460" y="116" fill="#55efc4" font-size="8" text-anchor="middle" font-weight="bold">LHUC</text>
+      <text x="460" y="128" fill="#55efc4" font-size="6" text-anchor="middle">Per-user</text>
+      <!-- Arrow from any model to LHUC -->
+      <line x1="460" y1="248" x2="460" y2="145" stroke="#55efc4" stroke-width="1.5" stroke-dasharray="5" opacity=".4"/>
+      <text x="475" y="190" fill="#55efc4" font-size="7">+LHUC 适配</text>
+      <!-- Legend -->
+      <rect x="130" y="50" width="250" height="65" rx="8" fill="rgba(255,255,255,.02)" stroke="rgba(255,255,255,.06)" stroke-width="1"/>
+      <circle cx="148" cy="68" r="5" fill="#fdcb6e" opacity=".6"/><text x="160" y="72" fill="#888" font-size="7">FM 族 (显式二阶)</text>
+      <circle cx="148" cy="85" r="5" fill="#6c5ce7" opacity=".6"/><text x="160" y="89" fill="#888" font-size="7">DNN 族 (隐式高阶)</text>
+      <circle cx="268" cy="68" r="5" fill="#00cec9" opacity=".6"/><text x="280" y="72" fill="#888" font-size="7">Cross 族 (显式高阶)</text>
+      <circle cx="268" cy="85" r="5" fill="#fd79a8" opacity=".6"/><text x="280" y="89" fill="#888" font-size="7">Meta 工业级</text>
+      <circle cx="148" cy="102" r="5" fill="#55efc4" opacity=".6"/><text x="160" y="106" fill="#888" font-size="7">个性化适配</text>
+      <circle cx="268" cy="102" r="5" fill="#74b9ff" opacity=".6"/><text x="280" y="106" fill="#888" font-size="7">注意力/双线性</text>
+    </svg>
+    <p><strong style="color:var(--gold)">主轴 1 -- 特征交互建模:</strong> 从 LR (无交互) -> POLY2 (暴力枚举) -> FM (分解交互) -> Wide&Deep/DeepFM (显式+隐式) -> DCN/xDeepFM (显式高阶) -> DCN-V2 (full-rank 交叉) -> DHEN (异构集成)。核心问题: <strong>如何更好地建模特征之间的组合效应</strong>。</p>
+    <p><strong style="color:var(--green)">主轴 2 -- 模型个性化:</strong> 从「所有用户共享同一模型」到「per-user 参数化适配」。LHUC 代表这一方向: 在共享模型的基础上，用极少的 per-user 参数让模型行为因人而异。这条轴与特征交互正交 -- LHUC 可以叠加在任何特征交互模型之上。</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     TIMELINE
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="timeline">
+  <div class="section-header">
+    <div class="section-num sn-gold">T</div>
+    <div class="section-title">演进时间线</div>
+  </div>
+  <div class="wide-card">
+    <h3>CTR 预估模型编年史</h3>
+    <div class="timeline-wrap">
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--gold)">2007~</div>
+        <div class="tl-text"><strong style="color:var(--gold)">LR (Logistic Regression)</strong> — 工业 CTR 预估的基线。线性模型，无特征交互，靠特征工程弥补。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--gold)">2007~</div>
+        <div class="tl-text"><strong style="color:var(--gold)">POLY2</strong> — 在 LR 上加入所有二阶交叉项。暴露了 O(n^2) 参数的不可行性。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--gold)">2010</div>
+        <div class="tl-text"><strong style="color:var(--gold)">FM (Factorization Machines)</strong> — Steffen Rendle 提出。用隐向量分解交互矩阵，O(kn) 参数，里程碑式工作。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--green)">2014</div>
+        <div class="tl-text"><strong style="color:var(--green)">LHUC</strong> — Swietojanski & Renals 在语音识别中提出 per-speaker adaptation。后被推荐系统借鉴。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--gold)">2016</div>
+        <div class="tl-text"><strong style="color:var(--gold)">FFM (Field-aware FM)</strong> — Juan et al. 为每个特征对每个 field 维护独立隐向量，Criteo 竞赛冠军。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--purple)">2016</div>
+        <div class="tl-text"><strong style="color:var(--purple)">Wide & Deep</strong> — Google。首个 Memorization + Generalization 双路架构，开启深度 CTR 时代。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--purple)">2017</div>
+        <div class="tl-text"><strong style="color:var(--purple)">DeepFM</strong> — Huawei。FM + DNN 共享 Embedding，消除手工特征工程，成为工业标准基线。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--cyan)">2017</div>
+        <div class="tl-text"><strong style="color:var(--cyan)">DCN (Deep & Cross Network)</strong> — Google。Cross Layer 显式建模高阶交互，O(d*L) 参数。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--cyan)">2018</div>
+        <div class="tl-text"><strong style="color:var(--cyan)">xDeepFM</strong> — Microsoft KDD。CIN 实现 vector-wise 显式高阶交互，阶数完全可控。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--blue)">2019</div>
+        <div class="tl-text"><strong style="color:var(--blue)">AutoInt</strong> — 多头自注意力建模特征交互，引入 Transformer 范式。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--blue)">2019</div>
+        <div class="tl-text"><strong style="color:var(--blue)">FiBiNET</strong> — SENET field 重要性 + Bilinear 双线性交互。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--pink)">2019</div>
+        <div class="tl-text"><strong style="color:var(--pink)">DLRM</strong> — Meta。面向工业规模的简洁架构，Embedding 分布式并行成为工程标准。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--cyan)">2020</div>
+        <div class="tl-text"><strong style="color:var(--cyan)">DCN-V2</strong> — Google。矩阵交叉取代向量交叉，MoE 变体，打破 rank-1 瓶颈。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year" style="color:var(--cyan)">2021~</div>
+        <div class="tl-text"><strong style="color:var(--cyan)">MMCN</strong> — 多头多层交叉网络，DCN-V2 的多子空间扩展。</div>
+      </div>
+      <div class="tl-item" style="margin-bottom:0">
+        <div class="tl-year" style="color:var(--pink)">2022</div>
+        <div class="tl-text"><strong style="color:var(--pink)">DHEN</strong> — Meta。异构交互算子的层次化集成，当前工业界最强方案之一。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     COMPARISON TABLE
+     ════════════════════════════════════════════════════════════════════ -->
+<div class="section" id="compare">
+  <div class="section-header">
+    <div class="section-num sn-gold">C</div>
+    <div class="section-title">全面对比</div>
+  </div>
+  <div class="wide-card">
+    <h3>15 模型横向对比</h3>
+    <div style="overflow-x:auto;">
+    <table class="cmp-table">
+      <thead>
+        <tr>
+          <th>模型</th>
+          <th>年份</th>
+          <th>来源</th>
+          <th>交互阶数</th>
+          <th>交互方式</th>
+          <th>核心创新</th>
+          <th>参数复杂度</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td style="color:var(--gold)"><strong>LR</strong></td>
+          <td>~2007</td>
+          <td>-</td>
+          <td>一阶</td>
+          <td>无</td>
+          <td>线性基线</td>
+          <td>O(n)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold)"><strong>POLY2</strong></td>
+          <td>~2007</td>
+          <td>-</td>
+          <td>二阶</td>
+          <td>显式枚举</td>
+          <td>暴力交叉</td>
+          <td>O(n^2)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold)"><strong>FM</strong></td>
+          <td>2010</td>
+          <td>Rendle</td>
+          <td>二阶</td>
+          <td>显式分解</td>
+          <td>隐向量内积分解</td>
+          <td>O(kn)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold)"><strong>FFM</strong></td>
+          <td>2016</td>
+          <td>Juan et al.</td>
+          <td>二阶</td>
+          <td>显式 field-aware</td>
+          <td>每 field 独立隐向量</td>
+          <td>O(kfn)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--purple)"><strong>Wide&Deep</strong></td>
+          <td>2016</td>
+          <td>Google</td>
+          <td>任意阶 (隐式)</td>
+          <td>手工+隐式</td>
+          <td>记忆+泛化双路</td>
+          <td>DNN 参数</td>
+        </tr>
+        <tr>
+          <td style="color:var(--purple)"><strong>DeepFM</strong></td>
+          <td>2017</td>
+          <td>Huawei</td>
+          <td>2阶显式+任意隐式</td>
+          <td>FM+DNN 共享</td>
+          <td>共享 Embedding</td>
+          <td>O(kn)+DNN</td>
+        </tr>
+        <tr>
+          <td style="color:var(--cyan)"><strong>DCN</strong></td>
+          <td>2017</td>
+          <td>Google</td>
+          <td>L+1 阶显式</td>
+          <td>Cross Layer</td>
+          <td>显式交叉层 (rank-1)</td>
+          <td>O(d*L)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--cyan)"><strong>xDeepFM</strong></td>
+          <td>2018</td>
+          <td>Microsoft</td>
+          <td>T+1 阶显式</td>
+          <td>CIN vector-wise</td>
+          <td>CIN 压缩交互网络</td>
+          <td>O(mHkT)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--cyan)"><strong>DCN-V2</strong></td>
+          <td>2020</td>
+          <td>Google</td>
+          <td>L+1 阶显式</td>
+          <td>矩阵交叉</td>
+          <td>Full-rank + MoE</td>
+          <td>O(d^2*L)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--blue)"><strong>AutoInt</strong></td>
+          <td>2019</td>
+          <td>-</td>
+          <td>多层注意力</td>
+          <td>Self-Attention</td>
+          <td>多头注意力交互</td>
+          <td>O(md'^2*L)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--blue)"><strong>FiBiNET</strong></td>
+          <td>2019</td>
+          <td>-</td>
+          <td>二阶 (增强)</td>
+          <td>SENET+Bilinear</td>
+          <td>Field 重要性+双线性</td>
+          <td>O(d^2*m)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--pink)"><strong>DLRM</strong></td>
+          <td>2019</td>
+          <td>Meta</td>
+          <td>二阶+MLP 任意</td>
+          <td>Dot Product+MLP</td>
+          <td>工业级分布式</td>
+          <td>Embedding 主导</td>
+        </tr>
+        <tr>
+          <td style="color:var(--cyan)"><strong>MMCN</strong></td>
+          <td>2021</td>
+          <td>-</td>
+          <td>L+1 阶显式</td>
+          <td>多头交叉</td>
+          <td>多子空间交叉</td>
+          <td>O(d^2*H*L)</td>
+        </tr>
+        <tr>
+          <td style="color:var(--pink)"><strong>DHEN</strong></td>
+          <td>2022</td>
+          <td>Meta</td>
+          <td>异构多阶</td>
+          <td>异构集成</td>
+          <td>可插拔异构算子</td>
+          <td>可变</td>
+        </tr>
+        <tr>
+          <td style="color:var(--green)"><strong>LHUC</strong></td>
+          <td>2014</td>
+          <td>Edinburgh</td>
+          <td>N/A (非交互)</td>
+          <td>Per-user 缩放</td>
+          <td>模型个性化适配</td>
+          <td>O(d*|U|)</td>
+        </tr>
+      </tbody>
+    </table>
+    </div>
+  </div>
+
+  <div class="wide-card">
+    <h3 style="color:var(--purple)">核心演进逻辑总结</h3>
+    <p><strong style="color:var(--gold)">第一阶段: 线性到分解 (LR -> POLY2 -> FM -> FFM)</strong></p>
+    <p>核心问题: 如何在稀疏数据上高效建模特征交互？答案是矩阵分解 (FM) 和 field-aware 精细化 (FFM)。这一阶段只解决了二阶交互。</p>
+    <p><strong style="color:var(--purple)">第二阶段: 浅层+深层 (Wide&Deep -> DeepFM)</strong></p>
+    <p>核心问题: 如何超越二阶？答案是引入 DNN 隐式学习高阶交互。DeepFM 用共享 Embedding 和 FM 自动交叉消除了手工特征工程。</p>
+    <p><strong style="color:var(--cyan)">第三阶段: 显式高阶 (DCN -> xDeepFM -> DCN-V2 -> MMCN)</strong></p>
+    <p>核心问题: DNN 的隐式交互不可控。答案是设计专门的显式高阶交互机制 (Cross Layer, CIN)，在保持可控性的同时提升表达能力。</p>
+    <p><strong style="color:var(--pink)">第四阶段: 工业集成 (DLRM -> DHEN)</strong></p>
+    <p>核心问题: 单一交互机制有局限。答案是将多种异构算子组合在一起，形成更强大的集成模型。</p>
+    <p><strong style="color:var(--green)">正交轴: 个性化 (LHUC)</strong></p>
+    <p>与特征交互演进正交的另一条线: 如何让模型行为因用户而异？LHUC 用 per-user 缩放因子实现轻量级个性化，可叠加在任何模型之上。</p>
+  </div>
+</div>
+
+<!-- ════════════════════════════════════════════════════════════════════
+     FOOTER
+     ════════════════════════════════════════════════════════════════════ -->
+<footer>
+  CTR 预估模型演进全景 &middot; Deep Dive &middot; LR to DHEN/LHUC<br>
+  <a href="../sparse-models.html">&larr; 返回 Sparse Models 全景图</a> &middot;
+  <a href="fm-deepfm-xdeepfm.html">FM/DeepFM/xDeepFM 详解</a> &middot;
+  <a href="lasso.html">LASSO 深度解读</a> &middot;
+  LLM4Rec Research &middot; 2026
+</footer>
+
+<script>
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold:.08, rootMargin:'0px 0px -40px 0px' });
+document.querySelectorAll('.row, .wide-card').forEach(el => obs.observe(el));
+</script>
+</body>
+</html>

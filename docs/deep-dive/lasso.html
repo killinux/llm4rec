@@ -1,0 +1,1161 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>LASSO 深度解读 — Regression Shrinkage and Selection via the Lasso</title>
+<style>
+  :root {
+    --bg: #08080d;
+    --card: #101018;
+    --border: #1a1a2a;
+    --gold: #fdcb6e;
+    --gold2: #e17055;
+    --purple: #6c5ce7;
+    --cyan: #00cec9;
+    --pink: #fd79a8;
+    --blue: #74b9ff;
+    --text: #dddde4;
+    --text2: #7e7e98;
+    --text3: #55556a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    line-height: 1.8;
+    overflow-x: hidden;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    min-height: 100vh;
+    display: flex; align-items: center; justify-content: center;
+    position: relative; overflow: hidden;
+  }
+  .hero::before {
+    content:'';
+    position:absolute; inset:0;
+    background:
+      radial-gradient(ellipse 500px 400px at 25% 35%, rgba(253,203,110,.12), transparent),
+      radial-gradient(ellipse 400px 300px at 75% 65%, rgba(225,112,85,.08), transparent);
+    animation: heroDrift 14s ease-in-out infinite alternate;
+  }
+  @keyframes heroDrift { 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(20px,-15px) scale(1.05)} }
+  .hero-inner {
+    position:relative; z-index:1;
+    max-width:900px; text-align:center; padding:2rem;
+  }
+  .hero-badge {
+    display:inline-block; padding:.3rem .9rem; border-radius:999px;
+    background:rgba(253,203,110,.1); border:1px solid rgba(253,203,110,.25);
+    color:var(--gold); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
+    margin-bottom:1.2rem;
+  }
+  .hero h1 {
+    font-size: clamp(2rem,5vw,3.4rem); font-weight:800;
+    background: linear-gradient(135deg, #fdcb6e, #e17055, #fd79a8);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    line-height:1.25; margin-bottom:.8rem;
+  }
+  .hero .subtitle {
+    font-size: clamp(.95rem,2.2vw,1.2rem);
+    color:var(--text2); max-width:700px; margin:0 auto 1.5rem;
+  }
+  .hero-meta {
+    display:flex; gap:2rem; justify-content:center; flex-wrap:wrap;
+    margin-top:1.5rem;
+  }
+  .hero-meta .item { text-align:center; }
+  .hero-meta .val { font-size:1.6rem; font-weight:700; color:var(--gold); }
+  .hero-meta .lbl { font-size:.78rem; color:var(--text2); }
+  .scroll-arrow {
+    position:absolute; bottom:2rem; left:50%; transform:translateX(-50%);
+    animation: bounce 2s infinite; z-index:1;
+  }
+  @keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0);opacity:.5} 50%{transform:translateX(-50%) translateY(10px);opacity:1} }
+  .scroll-arrow svg { width:26px; height:26px; stroke:var(--text3); fill:none; stroke-width:2; }
+
+  /* ── Navigation ── */
+  .nav {
+    position:sticky; top:0; z-index:100;
+    background:rgba(8,8,13,.88); backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    display:flex; justify-content:center; gap:.8rem; padding:.75rem 1rem;
+    flex-wrap:wrap;
+  }
+  .nav a {
+    padding:.35rem .9rem; border-radius:999px;
+    border:1px solid var(--border); background:transparent;
+    color:var(--text2); font-size:.8rem; text-decoration:none; transition:.3s;
+  }
+  .nav a:hover { border-color:var(--gold); color:#fff; background:rgba(253,203,110,.08); }
+
+  /* ── Section ── */
+  .section {
+    max-width:1100px; margin:0 auto; padding:4rem 1.5rem 2rem;
+  }
+  .section-header {
+    display:flex; align-items:center; gap:.8rem; margin-bottom:2rem;
+  }
+  .section-num {
+    width:40px; height:40px; border-radius:50%;
+    background:linear-gradient(135deg, var(--gold), var(--gold2));
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.1rem; font-weight:800; color:#000; flex-shrink:0;
+  }
+  .section-title {
+    font-size:1.6rem; font-weight:700; color:#fff;
+  }
+
+  /* ── Card row (left diagram, right text) ── */
+  .row {
+    display:grid; grid-template-columns:1fr 1fr; gap:0;
+    margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .row.visible { opacity:1; transform:translateY(0); }
+  .row .vis {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px 0 0 16px; padding:1.8rem;
+    display:flex; align-items:center; justify-content:center;
+    min-height:300px;
+  }
+  .row .txt {
+    background:var(--card); border:1px solid var(--border); border-left:none;
+    border-radius:0 16px 16px 0; padding:1.8rem 2rem;
+    display:flex; flex-direction:column; justify-content:center;
+  }
+  @media(max-width:860px){
+    .row { grid-template-columns:1fr; }
+    .row .vis { border-radius:16px 16px 0 0; min-height:240px; }
+    .row .txt { border-radius:0 0 16px 16px; border-left:1px solid var(--border); border-top:none; }
+  }
+  .row .vis svg { width:100%; max-width:420px; height:auto; }
+  .row .txt h3 { font-size:1.1rem; font-weight:700; color:var(--gold); margin-bottom:.5rem; }
+  .row .txt p { font-size:.9rem; color:var(--text2); margin-bottom:.7rem; }
+  .row .txt .formula {
+    font-family:'Courier New',monospace; font-size:.92rem;
+    padding:.7rem 1rem; border-radius:8px;
+    background:rgba(253,203,110,.04); border:1px solid rgba(253,203,110,.12);
+    color:var(--gold); margin:.6rem 0;
+  }
+  .row .txt .key {
+    font-size:.85rem; padding:.7rem 1rem;
+    background:rgba(108,92,231,.06); border-left:3px solid var(--purple);
+    border-radius:0 8px 8px 0; color:var(--text); line-height:1.7;
+  }
+  .row .txt .tags { display:flex; flex-wrap:wrap; gap:.35rem; margin:.5rem 0; }
+  .row .txt .tags span {
+    font-size:.7rem; padding:.18rem .5rem; border-radius:5px;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--text);
+  }
+
+  /* ── Full-width card ── */
+  .wide-card {
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:2rem; margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .wide-card.visible { opacity:1; transform:translateY(0); }
+  .wide-card h3 { font-size:1.15rem; font-weight:700; color:var(--gold); margin-bottom:1rem; }
+  .wide-card p { font-size:.9rem; color:var(--text2); margin-bottom:.8rem; }
+
+  /* ── Comparison table ── */
+  .cmp-table {
+    width:100%; border-collapse:collapse; margin:1rem 0;
+  }
+  .cmp-table th {
+    text-align:left; padding:.6rem .8rem; font-size:.82rem;
+    color:var(--gold); border-bottom:1px solid var(--border);
+    background:rgba(253,203,110,.04);
+  }
+  .cmp-table td {
+    padding:.55rem .8rem; font-size:.85rem; color:var(--text2);
+    border-bottom:1px solid rgba(255,255,255,.03);
+  }
+  .cmp-table tr:hover td { background:rgba(255,255,255,.02); }
+
+  /* ── Timeline ── */
+  .timeline-wrap {
+    position:relative; padding-left:30px; margin:1.5rem 0;
+  }
+  .timeline-wrap::before {
+    content:''; position:absolute; left:8px; top:0; bottom:0; width:2px;
+    background:linear-gradient(to bottom, var(--gold), var(--purple), var(--cyan));
+    opacity:.3;
+  }
+  .tl-item {
+    position:relative; margin-bottom:1.4rem; padding-left:1rem;
+  }
+  .tl-item::before {
+    content:''; position:absolute; left:-26px; top:6px;
+    width:10px; height:10px; border-radius:50%;
+    background:var(--gold); border:2px solid var(--bg);
+  }
+  .tl-year { font-size:.78rem; color:var(--gold); font-weight:700; }
+  .tl-text { font-size:.85rem; color:var(--text2); }
+
+  /* ── Footer ── */
+  footer {
+    text-align:center; padding:3rem 1rem; color:var(--text3);
+    font-size:.78rem; border-top:1px solid var(--border);
+  }
+  footer a { color:var(--gold); text-decoration:none; }
+</style>
+</head>
+<body>
+
+<!-- ════════ Hero ════════ -->
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <div class="hero-badge">Deep Dive Paper Reading</div>
+    <h1>Regression Shrinkage and Selection via the Lasso</h1>
+    <p class="subtitle">Robert Tibshirani · Journal of the Royal Statistical Society, Series B · 1996<br>稀疏建模的理论基石，一篇改变统计学与机器学习的经典论文</p>
+    <div class="hero-meta">
+      <div class="item"><div class="val">50,000+</div><div class="lbl">Google Scholar 引用</div></div>
+      <div class="item"><div class="val">1996</div><div class="lbl">发表年份</div></div>
+      <div class="item"><div class="val">L1</div><div class="lbl">核心创新</div></div>
+      <div class="item"><div class="val">28</div><div class="lbl">年影响力</div></div>
+    </div>
+  </div>
+  <div class="scroll-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></div>
+</section>
+
+<!-- ════════ Nav ════════ -->
+<nav class="nav">
+  <a href="#glossary">术语表</a>
+  <a href="#background">背景动机</a>
+  <a href="#core">核心思想</a>
+  <a href="#geometry">几何直觉</a>
+  <a href="#math">数学公式</a>
+  <a href="#algorithm">求解算法</a>
+  <a href="#properties">关键性质</a>
+  <a href="#comparison">方法对比</a>
+  <a href="#extensions">后续发展</a>
+  <a href="#impact">推荐系统影响</a>
+</nav>
+
+<!-- ════════ 0. Glossary ════════ -->
+<div class="section" id="glossary">
+  <div class="section-header">
+    <div class="section-num" style="background:linear-gradient(135deg, #00cec9, #0984e3);">0</div>
+    <div class="section-title">前置术语表</div>
+  </div>
+
+  <!-- LASSO 缩写 -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="28" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">LASSO 名称拆解</text>
+        <!-- 5 letters breakdown -->
+        <g transform="translate(30,50)">
+          <rect x="0" y="0" width="360" height="160" rx="12" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <!-- L -->
+          <text x="30" y="35" fill="#fdcb6e" font-size="28" font-weight="bold">L</text>
+          <text x="65" y="35" fill="#888" font-size="13">east</text>
+          <text x="65" y="55" fill="#666" font-size="10">最小化</text>
+          <line x1="10" y1="65" x2="350" y2="65" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <!-- A -->
+          <text x="30" y="95" fill="#e17055" font-size="28" font-weight="bold">A</text>
+          <text x="65" y="88" fill="#888" font-size="13">bsolute</text>
+          <text x="65" y="105" fill="#666" font-size="10">绝对值 — 使用 |βⱼ| 而非 βⱼ²</text>
+          <!-- S -->
+          <text x="175" y="35" fill="#00cec9" font-size="28" font-weight="bold">S</text>
+          <text x="205" y="35" fill="#888" font-size="13">hrinkage</text>
+          <text x="205" y="55" fill="#666" font-size="10">收缩 — 系数向零压缩</text>
+          <!-- S -->
+          <text x="175" y="95" fill="#6c5ce7" font-size="28" font-weight="bold">S</text>
+          <text x="205" y="88" fill="#888" font-size="13">election</text>
+          <text x="205" y="105" fill="#666" font-size="10">选择 — 部分系数精确为零</text>
+          <line x1="10" y1="115" x2="350" y2="115" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <!-- O -->
+          <text x="105" y="148" fill="#fd79a8" font-size="28" font-weight="bold">O</text>
+          <text x="138" y="148" fill="#888" font-size="13">perator</text>
+          <text x="220" y="148" fill="#666" font-size="10">算子 — 一种数学操作</text>
+        </g>
+        <!-- Lasso = 套索 -->
+        <rect x="30" y="228" width="360" height="55" rx="10" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="210" y="250" fill="#fd79a8" font-size="11" text-anchor="middle">英语中 lasso 也是「套索」的意思 (牛仔用来套牛的绳子)</text>
+        <text x="210" y="272" fill="#888" font-size="10" text-anchor="middle">一语双关 — 用 L1 约束把不重要的变量「套住」归零</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>LASSO 是什么缩写?</h3>
+      <p><strong style="color:var(--gold)">LASSO</strong> = <strong style="color:var(--gold)">L</strong>east <strong style="color:#e17055">A</strong>bsolute <strong style="color:var(--cyan)">S</strong>hrinkage and <strong style="color:var(--purple)">S</strong>election <strong style="color:var(--pink)">O</strong>perator</p>
+      <p>中文：<strong>最小绝对值收缩与选择算子</strong></p>
+      <p>名字本身概括了方法的两个核心功能：</p>
+      <div class="tags">
+        <span>Shrinkage 收缩 — 把系数往零压</span>
+        <span>Selection 选择 — 让部分系数=0</span>
+      </div>
+      <p>Tibshirani 取这个名字有一语双关的巧思—— lasso 在英语中是「套索」(牛仔套牛的绳子) 的意思，形象地表达了用 L1 约束把不重要变量「套住」清零的效果。</p>
+      <div class="key">完整论文标题: <em>Regression Shrinkage and Selection via the Lasso</em> — 通过 LASSO 实现回归收缩与选择。</div>
+    </div>
+  </div>
+
+  <!-- OLS -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="25" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">OLS: 普通最小二乘法</text>
+        <!-- Formula -->
+        <rect x="40" y="42" width="340" height="50" rx="10" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1.5"/>
+        <text x="210" y="62" fill="#a29bfe" font-size="12" text-anchor="middle">目标: min Σ(yᵢ - xᵢᵀβ)²</text>
+        <text x="210" y="82" fill="#888" font-size="10" text-anchor="middle">闭式解: β̂ = (XᵀX)⁻¹Xᵀy</text>
+        <!-- Scatter plot with fit line -->
+        <g transform="translate(50,110)">
+          <!-- Axes -->
+          <line x1="0" y1="150" x2="320" y2="150" stroke="#444" stroke-width="1.5"/>
+          <line x1="0" y1="150" x2="0" y2="0" stroke="#444" stroke-width="1.5"/>
+          <text x="160" y="172" fill="#888" font-size="9" text-anchor="middle">x</text>
+          <text x="-12" y="75" fill="#888" font-size="9" text-anchor="middle" transform="rotate(-90,-12,75)">y</text>
+          <!-- Data points -->
+          <circle cx="30" cy="125" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="55" cy="115" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="75" cy="100" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="100" cy="110" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="120" cy="85" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="150" cy="75" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="175" cy="80" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="200" cy="55" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="225" cy="60" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="250" cy="40" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="275" cy="30" r="4" fill="#6c5ce7" opacity=".6"/>
+          <circle cx="295" cy="25" r="4" fill="#6c5ce7" opacity=".6"/>
+          <!-- Fit line -->
+          <line x1="15" y1="130" x2="300" y2="22" stroke="#fdcb6e" stroke-width="2.5"/>
+          <text x="305" y="18" fill="#fdcb6e" font-size="9">ŷ = Xβ̂</text>
+          <!-- Residuals (a few) -->
+          <line x1="75" y1="100" x2="75" y2="94" stroke="#e17055" stroke-width="1" stroke-dasharray="2" opacity=".7"/>
+          <line x1="150" y1="75" x2="150" y2="72" stroke="#e17055" stroke-width="1" stroke-dasharray="2" opacity=".7"/>
+          <line x1="175" y1="80" x2="175" y2="63" stroke="#e17055" stroke-width="1" stroke-dasharray="2" opacity=".7"/>
+          <text x="190" y="76" fill="#e17055" font-size="7">残差</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>OLS = Ordinary Least Squares</h3>
+      <p><strong style="color:var(--purple)">OLS</strong>（普通最小二乘法）是最基础的线性回归方法。</p>
+      <p>目标很简单：找到一组系数 β，使<strong>预测值与真实值的残差平方和 (RSS) 最小</strong>：</p>
+      <div class="formula">min Σ(yᵢ - xᵢᵀβ)² = min ‖y - Xβ‖²</div>
+      <p>OLS 有直接的闭式解：</p>
+      <div class="formula">β̂ = (XᵀX)⁻¹Xᵀy</div>
+      <p>OLS 的问题：</p>
+      <p>- <strong style="color:#e17055">无正则化</strong>：没有任何约束，当特征多、样本少时严重过拟合</p>
+      <p>- <strong style="color:#e17055">无变量选择</strong>：给每个变量一个非零系数，即使该变量毫无用处</p>
+      <p>- <strong style="color:#e17055">共线性敏感</strong>：当特征高度相关时，XᵀX 接近奇异，系数极不稳定</p>
+      <div class="key">LASSO 的本质就是在 OLS 的基础上加了一个 L1 约束 Σ|βⱼ| ≤ t，以此获得<strong>正则化</strong>（防过拟合）和<strong>变量选择</strong>（稀疏性）的双重好处。</div>
+    </div>
+  </div>
+
+  <!-- Lp Space & L1 Constraint -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">Lp 空间与 Lp 范数</text>
+        <text x="210" y="42" fill="#888" font-size="10" text-anchor="middle">L = Lebesgue (勒贝格)，p = 参数</text>
+        <!-- General formula -->
+        <rect x="60" y="52" width="300" height="35" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="210" y="75" fill="#fdcb6e" font-size="12" text-anchor="middle" font-family="serif">‖β‖ₚ = ( |β₁|ᵖ + |β₂|ᵖ + ... + |βₙ|ᵖ )^(1/p)</text>
+        <!-- Unit balls for different p -->
+        <g transform="translate(15,100)">
+          <!-- p=0.5 -->
+          <g transform="translate(0,0)">
+            <text x="45" y="12" fill="#fd79a8" font-size="10" text-anchor="middle" font-weight="bold">p=0.5</text>
+            <line x1="0" y1="75" x2="90" y2="75" stroke="#333" stroke-width=".5"/>
+            <line x1="45" y1="25" x2="45" y2="125" stroke="#333" stroke-width=".5"/>
+            <path d="M45,30 C55,30 90,70 90,75 C90,80 55,120 45,120 C35,120 0,80 0,75 C0,70 35,30 45,30" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.5"/>
+            <text x="45" y="140" fill="#888" font-size="7" text-anchor="middle">星形 (非凸)</text>
+          </g>
+          <!-- p=1 -->
+          <g transform="translate(100,0)">
+            <text x="45" y="12" fill="#fdcb6e" font-size="10" text-anchor="middle" font-weight="bold">p=1 (LASSO)</text>
+            <line x1="0" y1="75" x2="90" y2="75" stroke="#333" stroke-width=".5"/>
+            <line x1="45" y1="25" x2="45" y2="125" stroke="#333" stroke-width=".5"/>
+            <polygon points="45,30 90,75 45,120 0,75" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width="2"/>
+            <circle cx="45" cy="30" r="3" fill="#fdcb6e"/>
+            <circle cx="90" cy="75" r="3" fill="#fdcb6e"/>
+            <circle cx="45" cy="120" r="3" fill="#fdcb6e"/>
+            <circle cx="0" cy="75" r="3" fill="#fdcb6e"/>
+            <text x="45" y="140" fill="#fdcb6e" font-size="7" text-anchor="middle">菱形 (有尖角!)</text>
+          </g>
+          <!-- p=2 -->
+          <g transform="translate(200,0)">
+            <text x="45" y="12" fill="#6c5ce7" font-size="10" text-anchor="middle" font-weight="bold">p=2 (Ridge)</text>
+            <line x1="0" y1="75" x2="90" y2="75" stroke="#333" stroke-width=".5"/>
+            <line x1="45" y1="25" x2="45" y2="125" stroke="#333" stroke-width=".5"/>
+            <circle cx="45" cy="75" r="45" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="2"/>
+            <text x="45" y="140" fill="#888" font-size="7" text-anchor="middle">圆形 (光滑)</text>
+          </g>
+          <!-- p=∞ -->
+          <g transform="translate(300,0)">
+            <text x="45" y="12" fill="#00cec9" font-size="10" text-anchor="middle" font-weight="bold">p=∞</text>
+            <line x1="0" y1="75" x2="90" y2="75" stroke="#333" stroke-width=".5"/>
+            <line x1="45" y1="25" x2="45" y2="125" stroke="#333" stroke-width=".5"/>
+            <rect x="0" y="30" width="90" height="90" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="2"/>
+            <text x="45" y="140" fill="#888" font-size="7" text-anchor="middle">正方形</text>
+          </g>
+        </g>
+        <!-- Table below -->
+        <g transform="translate(20,258)">
+          <rect x="0" y="0" width="380" height="70" rx="8" fill="rgba(0,206,201,.04)" stroke="rgba(0,206,201,.15)" stroke-width="1"/>
+          <text x="45" y="18" fill="#fd79a8" font-size="9" text-anchor="middle" font-weight="bold">L0</text>
+          <text x="45" y="33" fill="#888" font-size="7" text-anchor="middle">非零个数</text>
+          <text x="45" y="48" fill="#666" font-size="7" text-anchor="middle">稀疏度</text>
+          <text x="45" y="63" fill="#555" font-size="6" text-anchor="middle">(不是真范数)</text>
+
+          <text x="140" y="18" fill="#fdcb6e" font-size="9" text-anchor="middle" font-weight="bold">L1</text>
+          <text x="140" y="33" fill="#888" font-size="7" text-anchor="middle">Σ|βⱼ|</text>
+          <text x="140" y="48" fill="#666" font-size="7" text-anchor="middle">绝对值之和</text>
+          <text x="140" y="63" fill="#666" font-size="6" text-anchor="middle">曼哈顿距离</text>
+
+          <text x="240" y="18" fill="#6c5ce7" font-size="9" text-anchor="middle" font-weight="bold">L2</text>
+          <text x="240" y="33" fill="#888" font-size="7" text-anchor="middle">√(Σβⱼ²)</text>
+          <text x="240" y="48" fill="#666" font-size="7" text-anchor="middle">平方和开根</text>
+          <text x="240" y="63" fill="#666" font-size="6" text-anchor="middle">欧氏距离</text>
+
+          <text x="340" y="18" fill="#00cec9" font-size="9" text-anchor="middle" font-weight="bold">L∞</text>
+          <text x="340" y="33" fill="#888" font-size="7" text-anchor="middle">max|βⱼ|</text>
+          <text x="340" y="48" fill="#666" font-size="7" text-anchor="middle">最大绝对值</text>
+          <text x="340" y="63" fill="#666" font-size="6" text-anchor="middle">切比雪夫距离</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>Lp 空间 = Lebesgue Space</h3>
+      <p><strong>L</strong> 来自法国数学家 <strong style="color:var(--gold)">Henri Lebesgue</strong>（亨利·勒贝格），<strong>p</strong> 是一个控制「怎么度量大小」的参数。</p>
+      <p>Lp 范数的通用定义：</p>
+      <div class="formula">‖β‖ₚ = ( |β₁|ᵖ + |β₂|ᵖ + ... + |βₙ|ᵖ )^(1/p)</div>
+      <p>不同的 p 值给出不同的度量方式和几何形状：</p>
+      <div class="tags">
+        <span>L0: 非零元素个数</span>
+        <span>L1: 绝对值之和 (曼哈顿距离)</span>
+        <span>L2: 平方和开根 (欧氏距离)</span>
+        <span>L∞: 最大绝对值 (切比雪夫距离)</span>
+      </div>
+      <p>左图展示了不同 p 值下「单位球」（满足 ‖β‖ₚ=1 的点集）的形状。<strong style="color:var(--gold)">p=1 的菱形有尖角</strong>，这正是 LASSO 产生稀疏的几何原因。</p>
+      <div class="key">LASSO 选 L1 而非 L2 的本质：选了一个<strong>有尖角的约束形状</strong>。尖角位于坐标轴上（某些分量=0），等高线碰到尖角 → 解是稀疏的。</div>
+    </div>
+  </div>
+
+  <!-- L1 Constraint -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="14" font-weight="bold" text-anchor="middle">L1 约束: 稀疏的来源</text>
+        <!-- L1 norm definition -->
+        <rect x="40" y="40" width="340" height="40" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="210" y="65" fill="#fdcb6e" font-size="13" text-anchor="middle" font-family="serif">‖β‖₁ = |β₁| + |β₂| + ... + |βₚ| ≤ t</text>
+        <!-- Budget analogy -->
+        <g transform="translate(30,100)">
+          <rect x="0" y="0" width="360" height="170" rx="12" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="180" y="22" fill="#00cec9" font-size="11" font-weight="bold" text-anchor="middle">预算类比</text>
+          <text x="180" y="42" fill="#888" font-size="10" text-anchor="middle">总预算 t = 10，分配给 5 个变量</text>
+          <!-- Budget bars - sparse allocation -->
+          <g transform="translate(20,55)">
+            <text x="0" y="12" fill="#888" font-size="9">β₁</text>
+            <rect x="25" y="0" width="200" height="16" rx="3" fill="#fdcb6e" opacity=".6"/>
+            <text x="230" y="12" fill="#fdcb6e" font-size="9">|β₁| = 5.0</text>
+
+            <text x="0" y="35" fill="#888" font-size="9">β₂</text>
+            <rect x="25" y="23" width="0" height="16" rx="3" fill="#444"/>
+            <text x="30" y="35" fill="#e17055" font-size="9">|β₂| = 0 (归零!)</text>
+
+            <text x="0" y="58" fill="#888" font-size="9">β₃</text>
+            <rect x="25" y="46" width="120" height="16" rx="3" fill="#fdcb6e" opacity=".4"/>
+            <text x="150" y="58" fill="#fdcb6e" font-size="9">|β₃| = 3.0</text>
+
+            <text x="0" y="81" fill="#888" font-size="9">β₄</text>
+            <rect x="25" y="69" width="0" height="16" rx="3" fill="#444"/>
+            <text x="30" y="81" fill="#e17055" font-size="9">|β₄| = 0 (归零!)</text>
+
+            <text x="0" y="104" fill="#888" font-size="9">β₅</text>
+            <rect x="25" y="92" width="80" height="16" rx="3" fill="#fdcb6e" opacity=".3"/>
+            <text x="110" y="104" fill="#fdcb6e" font-size="9">|β₅| = 2.0</text>
+          </g>
+          <text x="180" y="165" fill="#888" font-size="9" text-anchor="middle">5.0 + 0 + 3.0 + 0 + 2.0 = 10 ≤ t ✓ (预算集中给重要变量)</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>L1 约束到底是什么?</h3>
+      <p><strong style="color:var(--gold)">L1 约束</strong>是对参数向量的 L1 范数（各分量绝对值之和）施加上界限制：</p>
+      <div class="formula">Σ|βⱼ| = |β₁| + |β₂| + ... + |βₚ| ≤ t</div>
+      <p><strong>预算类比</strong>：把 L1 约束想象成一个<strong>固定预算 t</strong>，你总共只有 t 元钱分配给所有系数。</p>
+      <p>由于花的是绝对值，模型会倾向于：</p>
+      <p>- <strong style="color:var(--gold)">集中预算</strong>给少数重要变量（给它们较大的系数）</p>
+      <p>- <strong style="color:#e17055">不重要变量直接分配 0</strong>（省下预算给更重要的）</p>
+      <p>这就是稀疏性的来源！</p>
+      <h3 style="margin-top:1rem">L1 vs L2 约束的关键区别</h3>
+      <div class="tags">
+        <span>L1: Σ|βⱼ| ≤ t → 菱形，有尖角 → 稀疏!</span>
+        <span>L2: Σβⱼ² ≤ t → 圆形，光滑 → 不稀疏</span>
+      </div>
+      <div class="key">L2 约束像是「所有人工资打八折」(等比缩放)；L1 约束像是「每人先扣 λ 元固定税，不够扣的直接清零」(软阈值)。小系数被清零，大系数保留——这就是稀疏。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 1. Background ════════ -->
+<div class="section" id="background">
+  <div class="section-header">
+    <div class="section-num">1</div>
+    <div class="section-title">背景与动机</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">1996 年之前的困境</text>
+        <!-- Problem 1: Too many features -->
+        <g transform="translate(20,45)">
+          <rect x="0" y="0" width="180" height="110" rx="10" fill="rgba(225,112,85,.06)" stroke="#e17055" stroke-width="1.2"/>
+          <text x="90" y="22" fill="#e17055" font-size="11" font-weight="bold" text-anchor="middle">问题一: 过拟合</text>
+          <text x="90" y="44" fill="#888" font-size="9" text-anchor="middle">特征多，样本少 (p ≫ n)</text>
+          <!-- Overfitting curve -->
+          <polyline points="20,90 40,85 60,60 80,50 100,55 120,70 140,82 160,88" fill="none" stroke="#e17055" stroke-width="1.5"/>
+          <polyline points="20,90 60,75 100,65 140,60 160,58" fill="none" stroke="#00cec9" stroke-width="1.5" stroke-dasharray="3"/>
+          <text x="165" y="95" fill="#e17055" font-size="7">训练集</text>
+          <text x="165" y="55" fill="#00cec9" font-size="7">测试集</text>
+        </g>
+        <!-- Problem 2: Interpretability -->
+        <g transform="translate(220,45)">
+          <rect x="0" y="0" width="180" height="110" rx="10" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1.2"/>
+          <text x="90" y="22" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">问题二: 不可解释</text>
+          <text x="90" y="44" fill="#888" font-size="9" text-anchor="middle">OLS 给每个变量非零系数</text>
+          <!-- All coefficients non-zero -->
+          <g transform="translate(15,52)">
+            <rect x="0" y="0" width="10" height="35" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="15" y="5" width="10" height="30" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="30" y="2" width="10" height="33" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="45" y="8" width="10" height="27" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="60" y="3" width="10" height="32" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="75" y="7" width="10" height="28" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="90" y="1" width="10" height="34" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="105" y="6" width="10" height="29" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="120" y="4" width="10" height="31" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="135" y="9" width="10" height="26" rx="2" fill="#6c5ce7" opacity=".4"/>
+          </g>
+          <text x="90" y="100" fill="#888" font-size="8" text-anchor="middle">哪些变量真正重要?</text>
+        </g>
+        <!-- Existing solutions and their problems -->
+        <g transform="translate(20,175)">
+          <rect x="0" y="0" width="380" height="105" rx="10" fill="rgba(253,203,110,.04)" stroke="rgba(253,203,110,.2)" stroke-width="1"/>
+          <text x="190" y="20" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">已有方案的局限</text>
+          <text x="20" y="42" fill="#888" font-size="9">子集选择 (Best Subset)</text>
+          <text x="240" y="42" fill="#e17055" font-size="9">→ NP-hard，组合爆炸，不稳定</text>
+          <line x1="20" y1="52" x2="360" y2="52" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <text x="20" y="68" fill="#888" font-size="9">岭回归 (Ridge / L2)</text>
+          <text x="240" y="68" fill="#e17055" font-size="9">→ 收缩系数但永远不为零</text>
+          <line x1="20" y1="78" x2="360" y2="78" stroke="rgba(255,255,255,.05)" stroke-width="1"/>
+          <text x="20" y="94" fill="#888" font-size="9">逐步回归 (Stepwise)</text>
+          <text x="240" y="94" fill="#e17055" font-size="9">→ 贪心搜索，高方差，过拟合</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>为什么需要 LASSO?</h3>
+      <p>在 1996 年之前，统计建模面临两大核心挑战：</p>
+      <p><strong style="color:#e17055">过拟合</strong> — 当特征数量接近或超过样本数量时，普通最小二乘 (OLS) 会严重过拟合，泛化性能极差。</p>
+      <p><strong style="color:#6c5ce7">不可解释</strong> — OLS 和岭回归都会给每个变量一个非零系数，无法告诉我们哪些变量真正重要。在基因组学、经济学等领域，变量选择和模型解释性至关重要。</p>
+      <p>已有方法各有缺陷：最优子集选择 (Best Subset Selection) 计算复杂度为 O(2ᵖ) 无法扩展；岭回归能收缩系数但不能让系数为零；逐步回归是贪心算法，不稳定。</p>
+      <div class="key">Tibshirani 的洞察：能否找到一种方法，<strong>同时</strong>实现系数收缩（正则化）和变量选择（稀疏性），且计算高效？</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 2. Core Idea ════════ -->
+<div class="section" id="core">
+  <div class="section-header">
+    <div class="section-num">2</div>
+    <div class="section-title">核心思想</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 320" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">LASSO 的核心公式</text>
+        <!-- Main formula box -->
+        <rect x="30" y="38" width="360" height="60" rx="12" fill="rgba(253,203,110,.06)" stroke="var(--gold)" stroke-width="1.5"/>
+        <text x="210" y="65" fill="#fdcb6e" font-size="15" font-weight="bold" text-anchor="middle" font-family="serif">
+          min  Σ(yᵢ - β₀ - Σ xᵢⱼβⱼ)²
+        </text>
+        <text x="210" y="88" fill="#e17055" font-size="13" font-weight="bold" text-anchor="middle" font-family="serif">
+          subject to  Σ|βⱼ| ≤ t
+        </text>
+        <!-- Equivalent Lagrangian -->
+        <text x="210" y="125" fill="#888" font-size="10" text-anchor="middle">等价的 Lagrangian 形式:</text>
+        <rect x="60" y="135" width="300" height="40" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="210" y="162" fill="#a29bfe" font-size="13" text-anchor="middle" font-family="serif">
+          min  ‖y - Xβ‖² + λ Σ|βⱼ|
+        </text>
+        <!-- Decomposition -->
+        <g transform="translate(30,195)">
+          <!-- RSS part -->
+          <rect x="0" y="0" width="165" height="55" rx="8" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1"/>
+          <text x="82" y="20" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">数据拟合项</text>
+          <text x="82" y="40" fill="#888" font-size="9" text-anchor="middle">‖y - Xβ‖² = RSS</text>
+          <text x="82" y="52" fill="#666" font-size="7" text-anchor="middle">让预测尽量接近真实值</text>
+          <!-- + -->
+          <text x="185" y="30" fill="#fff" font-size="20">+</text>
+          <!-- Penalty part -->
+          <rect x="195" y="0" width="165" height="55" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="277" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">L1 惩罚项</text>
+          <text x="277" y="40" fill="#888" font-size="9" text-anchor="middle">λ · Σ|βⱼ|</text>
+          <text x="277" y="52" fill="#666" font-size="7" text-anchor="middle">让系数尽量小 / 为零</text>
+        </g>
+        <!-- Lambda control -->
+        <g transform="translate(30,270)">
+          <rect x="0" y="0" width="360" height="35" rx="8" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="10" y="14" fill="#fd79a8" font-size="9" font-weight="bold">λ = 0</text>
+          <text x="10" y="28" fill="#888" font-size="7">→ OLS</text>
+          <!-- Slider -->
+          <line x1="80" y1="18" x2="280" y2="18" stroke="#444" stroke-width="3" stroke-linecap="round"/>
+          <line x1="80" y1="18" x2="180" y2="18" stroke="linear-gradient(#fdcb6e,#e17055)" stroke-width="3" stroke-linecap="round"/>
+          <circle cx="180" cy="18" r="6" fill="#fdcb6e" stroke="#fff" stroke-width="1.5"/>
+          <text x="170" y="8" fill="#fdcb6e" font-size="7">λ*</text>
+          <text x="290" y="14" fill="#fd79a8" font-size="9" font-weight="bold">λ → ∞</text>
+          <text x="290" y="28" fill="#888" font-size="7">→ 全零</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>一个约束改变一切</h3>
+      <p>LASSO (Least Absolute Shrinkage and Selection Operator) 的核心思想惊人地简洁：</p>
+      <div class="formula">minimize  RSS(β) = Σ(yᵢ - xᵢᵀβ)²<br>subject to  ‖β‖₁ = Σ|βⱼ| ≤ t</div>
+      <p>与岭回归 (Ridge) 唯一的区别是：将 L2 约束 Σβⱼ² ≤ t 替换为 <strong style="color:var(--gold)">L1 约束 Σ|βⱼ| ≤ t</strong>。</p>
+      <p>这个看似微小的改变产生了根本性不同的行为：</p>
+      <div class="tags">
+        <span>收缩 (Shrinkage)</span>
+        <span>变量选择 (Selection)</span>
+        <span>稀疏解 (Sparsity)</span>
+      </div>
+      <p><strong>λ (或 t) 是唯一的超参数</strong>，控制稀疏程度。λ=0 退化为 OLS；λ→∞ 所有系数为零。通过交叉验证选择最优 λ。</p>
+      <div class="key">名称含义: <strong>L</strong>east <strong>A</strong>bsolute <strong>S</strong>hrinkage and <strong>S</strong>election <strong>O</strong>perator — 最小绝对值收缩与选择算子。名字本身就概括了方法的两个核心功能。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 3. Geometry ════════ -->
+<div class="section" id="geometry">
+  <div class="section-header">
+    <div class="section-num">3</div>
+    <div class="section-title">几何直觉 — 为什么 L1 产生稀疏?</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+        <defs>
+          <linearGradient id="gl1" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#fdcb6e"/><stop offset="100%" stop-color="#e17055"/></linearGradient>
+          <linearGradient id="gl2" x1="0" y1="0" x2="1" y2="1"><stop offset="0%" stop-color="#6c5ce7"/><stop offset="100%" stop-color="#a29bfe"/></linearGradient>
+        </defs>
+        <text x="210" y="20" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">L1 (LASSO) vs L2 (Ridge) 几何对比</text>
+
+        <!-- L1 LASSO -->
+        <g transform="translate(10,35)">
+          <text x="100" y="12" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">LASSO (L1)</text>
+          <!-- Axes -->
+          <line x1="30" y1="240" x2="195" y2="240" stroke="#444" stroke-width="1"/>
+          <line x1="30" y1="240" x2="30" y2="30" stroke="#444" stroke-width="1"/>
+          <text x="115" y="258" fill="#666" font-size="9" text-anchor="middle">β₁</text>
+          <text x="15" y="135" fill="#666" font-size="9" text-anchor="middle" transform="rotate(-90,15,135)">β₂</text>
+          <!-- L1 diamond -->
+          <polygon points="100,60 170,140 100,220 30,140" fill="rgba(253,203,110,.08)" stroke="url(#gl1)" stroke-width="2.5"/>
+          <!-- Contour ellipses -->
+          <ellipse cx="155" cy="80" rx="40" ry="28" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".4" transform="rotate(25,155,80)"/>
+          <ellipse cx="155" cy="80" rx="65" ry="44" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".3" transform="rotate(25,155,80)"/>
+          <ellipse cx="155" cy="80" rx="92" ry="63" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".2" transform="rotate(25,155,80)"/>
+          <!-- OLS point -->
+          <circle cx="155" cy="80" r="4" fill="#6c5ce7"/>
+          <text x="163" y="73" fill="#6c5ce7" font-size="8">OLS β̂</text>
+          <!-- Intersection at vertex! -->
+          <circle cx="100" cy="60" r="7" fill="#fdcb6e" stroke="#fff" stroke-width="2"/>
+          <text x="108" y="48" fill="#fdcb6e" font-size="9" font-weight="bold">β₂=0!</text>
+          <!-- Arrow -->
+          <line x1="150" y1="82" x2="108" y2="64" stroke="#fdcb6e" stroke-width="1.5" stroke-dasharray="4" marker-end="url(#arr1)"/>
+          <defs><marker id="arr1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6" markerHeight="6" orient="auto"><path d="M0 0L10 5L0 10z" fill="#fdcb6e"/></marker></defs>
+          <!-- Label -->
+          <text x="100" y="235" fill="#fdcb6e" font-size="8" text-anchor="middle">菱形的「尖角」在坐标轴上</text>
+          <text x="100" y="248" fill="#888" font-size="7" text-anchor="middle">等高线大概率先碰到尖角 → β=0</text>
+        </g>
+
+        <!-- L2 Ridge -->
+        <g transform="translate(210,35)">
+          <text x="100" y="12" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">Ridge (L2)</text>
+          <!-- Axes -->
+          <line x1="30" y1="240" x2="195" y2="240" stroke="#444" stroke-width="1"/>
+          <line x1="30" y1="240" x2="30" y2="30" stroke="#444" stroke-width="1"/>
+          <text x="115" y="258" fill="#666" font-size="9" text-anchor="middle">β₁</text>
+          <text x="15" y="135" fill="#666" font-size="9" text-anchor="middle" transform="rotate(-90,15,135)">β₂</text>
+          <!-- L2 circle -->
+          <circle cx="100" cy="140" r="80" fill="rgba(108,92,231,.06)" stroke="url(#gl2)" stroke-width="2.5"/>
+          <!-- Contour ellipses -->
+          <ellipse cx="155" cy="80" rx="40" ry="28" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".4" transform="rotate(25,155,80)"/>
+          <ellipse cx="155" cy="80" rx="65" ry="44" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".3" transform="rotate(25,155,80)"/>
+          <ellipse cx="155" cy="80" rx="92" ry="63" fill="none" stroke="#6c5ce7" stroke-width="1.2" opacity=".2" transform="rotate(25,155,80)"/>
+          <!-- OLS point -->
+          <circle cx="155" cy="80" r="4" fill="#6c5ce7"/>
+          <text x="163" y="73" fill="#6c5ce7" font-size="8">OLS β̂</text>
+          <!-- Intersection NOT at axis -->
+          <circle cx="125" cy="68" r="7" fill="#a29bfe" stroke="#fff" stroke-width="2"/>
+          <text x="100" y="55" fill="#a29bfe" font-size="9">β₁≠0, β₂≠0</text>
+          <!-- Arrow -->
+          <line x1="150" y1="80" x2="132" y2="72" stroke="#a29bfe" stroke-width="1.5" stroke-dasharray="4"/>
+          <!-- Label -->
+          <text x="100" y="235" fill="#a29bfe" font-size="8" text-anchor="middle">圆形没有尖角</text>
+          <text x="100" y="248" fill="#888" font-size="7" text-anchor="middle">等高线碰到圆的切点 → 系数≠0</text>
+        </g>
+
+        <!-- Bottom insight -->
+        <rect x="30" y="290" width="360" height="38" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="210" y="308" fill="#fdcb6e" font-size="10" text-anchor="middle" font-weight="bold">关键洞察: L1 菱形的角正好在坐标轴上 → 交点处某些 βⱼ 精确为零</text>
+        <text x="210" y="322" fill="#888" font-size="8" text-anchor="middle">维度越高，「角」越多，等高线碰到角的概率越大 → 高维时 LASSO 特别有效</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>几何解释是 LASSO 最优美的部分</h3>
+      <p>将 LASSO 视为约束优化问题，我们要在约束区域内找到使 RSS 最小的点。RSS 的等高线是以 OLS 估计 β̂ 为中心的同心椭圆。</p>
+      <p><strong style="color:var(--gold)">L1 约束区域</strong>是一个菱形（高维中是超八面体），其「尖角」恰好位于坐标轴上。当 RSS 的等高线从 β̂ 向外扩展时，最先碰到菱形的地方大概率是某个「角」—— 而角上某些坐标值为零。</p>
+      <p><strong style="color:var(--purple)">L2 约束区域</strong>是一个圆（高维中是超球），光滑无角。等高线与圆相切时，切点几乎不可能落在坐标轴上，所以系数不会精确为零。</p>
+      <div class="key">
+        <strong>高维效应:</strong> 在 p 维空间中，L1 超八面体有 2p 个顶角。维度越高，顶角越多，等高线碰到顶角的概率越大 → LASSO 在高维场景下特别适合做特征选择。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 4. Math ════════ -->
+<div class="section" id="math">
+  <div class="section-header">
+    <div class="section-num">4</div>
+    <div class="section-title">数学推导</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">软阈值算子: LASSO 的闭式解 (正交情况)</text>
+
+        <!-- Soft thresholding function -->
+        <g transform="translate(60,40)">
+          <!-- Axes -->
+          <line x1="0" y1="140" x2="300" y2="140" stroke="#555" stroke-width="1.5"/>
+          <line x1="150" y1="20" x2="150" y2="260" stroke="#555" stroke-width="1.5"/>
+          <text x="305" y="145" fill="#888" font-size="10">β̂ (OLS)</text>
+          <text x="140" y="15" fill="#888" font-size="10">β̃ (LASSO)</text>
+
+          <!-- OLS 45-degree line (reference) -->
+          <line x1="10" y1="280" x2="290" y2="0" stroke="#444" stroke-width="1" stroke-dasharray="4"/>
+          <text x="280" y="15" fill="#444" font-size="8">OLS (λ=0)</text>
+
+          <!-- Soft threshold function -->
+          <polyline points="10,140 100,140 150,140 200,140 290,50" fill="none" stroke="#fdcb6e" stroke-width="0" />
+          <!-- Dead zone -->
+          <rect x="110" y="100" width="80" height="80" rx="0" fill="rgba(225,112,85,.06)"/>
+          <!-- Actual function -->
+          <line x1="10" y1="230" x2="110" y2="140" stroke="#fdcb6e" stroke-width="2.5"/>
+          <line x1="110" y1="140" x2="190" y2="140" stroke="#e17055" stroke-width="2.5"/>
+          <line x1="190" y1="140" x2="290" y2="50" stroke="#fdcb6e" stroke-width="2.5"/>
+
+          <!-- Lambda markers -->
+          <line x1="110" y1="135" x2="110" y2="145" stroke="#e17055" stroke-width="2"/>
+          <text x="110" y="158" fill="#e17055" font-size="9" text-anchor="middle">-λ</text>
+          <line x1="190" y1="135" x2="190" y2="145" stroke="#e17055" stroke-width="2"/>
+          <text x="190" y="158" fill="#e17055" font-size="9" text-anchor="middle">+λ</text>
+
+          <!-- Dead zone label -->
+          <text x="150" y="185" fill="#e17055" font-size="9" text-anchor="middle">死区 (β̃=0)</text>
+
+          <!-- Formula -->
+          <text x="150" y="210" fill="#fdcb6e" font-size="10" text-anchor="middle">β̃ⱼ = sign(β̂ⱼ) · max(|β̂ⱼ| - λ, 0)</text>
+        </g>
+
+        <!-- Comparison with Ridge (hard shrinkage) -->
+        <g transform="translate(40,280)">
+          <rect x="0" y="0" width="340" height="45" rx="8" fill="rgba(108,92,231,.05)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="170" y="15" fill="#6c5ce7" font-size="9" text-anchor="middle">Ridge: β̃ⱼ = β̂ⱼ / (1+λ)  → 均匀缩放，永不为零</text>
+          <text x="170" y="35" fill="#fdcb6e" font-size="9" text-anchor="middle">LASSO: β̃ⱼ = sign(β̂ⱼ)·max(|β̂ⱼ|-λ, 0) → 小系数截断为零!</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>软阈值算子 (Soft Thresholding)</h3>
+      <p>当设计矩阵 X 正交 (XᵀX = I) 时，LASSO 有优雅的闭式解：</p>
+      <div class="formula">β̃ⱼ = sign(β̂ⱼ) · max(|β̂ⱼ| - λ, 0)</div>
+      <p>这就是<strong style="color:var(--gold)">软阈值算子</strong> (Soft Thresholding Operator)：</p>
+      <p>- 如果 OLS 系数 |β̂ⱼ| ≤ λ，则 <strong style="color:#e17055">β̃ⱼ = 0</strong>（进入死区，被"杀死"）</p>
+      <p>- 如果 |β̂ⱼ| > λ，则系数被向零<strong>平移</strong> λ 个单位</p>
+      <p>对比三种方法：</p>
+      <div class="tags">
+        <span>OLS: β̃ = β̂（无收缩）</span>
+        <span>Ridge: β̃ = β̂/(1+λ)（等比缩放）</span>
+        <span>LASSO: 软阈值（截断+平移）</span>
+      </div>
+      <div class="key">Ridge 对所有系数做等比例缩放，大小系数同等对待。LASSO 则更"民主"——给每个系数一个固定的减免额度 λ，小系数直接归零，大系数保留。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 5. Algorithm ════════ -->
+<div class="section" id="algorithm">
+  <div class="section-header">
+    <div class="section-num">5</div>
+    <div class="section-title">求解算法</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 350" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">LASSO 求解算法演进</text>
+
+        <!-- Original: QP -->
+        <g transform="translate(20,40)">
+          <rect x="0" y="0" width="380" height="55" rx="10" fill="rgba(253,203,110,.05)" stroke="#fdcb6e" stroke-width="1.2"/>
+          <text x="15" y="18" fill="#fdcb6e" font-size="9" font-weight="bold">1996 原论文</text>
+          <text x="15" y="38" fill="#888" font-size="10">二次规划 (QP) — 将 L1 约束转化为线性约束</text>
+          <text x="15" y="52" fill="#666" font-size="8">βⱼ = βⱼ⁺ - βⱼ⁻,  βⱼ⁺≥0, βⱼ⁻≥0,  Σ(βⱼ⁺+βⱼ⁻)≤t</text>
+          <rect x="300" y="15" width="70" height="25" rx="5" fill="rgba(225,112,85,.1)" stroke="#e17055" stroke-width="1"/>
+          <text x="335" y="32" fill="#e17055" font-size="8" text-anchor="middle">O(p³)</text>
+        </g>
+
+        <!-- LARS -->
+        <g transform="translate(20,110)">
+          <rect x="0" y="0" width="380" height="70" rx="10" fill="rgba(0,206,201,.05)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="15" y="18" fill="#00cec9" font-size="9" font-weight="bold">2004 LARS</text>
+          <text x="15" y="38" fill="#888" font-size="10">Least Angle Regression — Efron et al.</text>
+          <text x="15" y="55" fill="#666" font-size="8">沿等角方向前进，每步加入/移除一个变量，计算整个正则化路径</text>
+          <rect x="300" y="15" width="70" height="25" rx="5" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width="1"/>
+          <text x="335" y="32" fill="#00cec9" font-size="8" text-anchor="middle">O(p·min(n,p))</text>
+          <!-- Path illustration -->
+          <polyline points="290,60 310,55 325,45 340,38 355,35 370,34" fill="none" stroke="#00cec9" stroke-width="1.5" opacity=".5"/>
+        </g>
+
+        <!-- Coordinate Descent -->
+        <g transform="translate(20,195)">
+          <rect x="0" y="0" width="380" height="70" rx="10" fill="rgba(108,92,231,.05)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="15" y="18" fill="#6c5ce7" font-size="9" font-weight="bold">2007 Coordinate Descent</text>
+          <text x="15" y="38" fill="#888" font-size="10">坐标下降法 — Friedman, Hastie, Tibshirani (glmnet)</text>
+          <text x="15" y="55" fill="#666" font-size="8">逐坐标优化，每步对一个 βⱼ 应用软阈值，极快收敛</text>
+          <rect x="300" y="15" width="70" height="25" rx="5" fill="rgba(108,92,231,.1)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="335" y="32" fill="#6c5ce7" font-size="8" text-anchor="middle">极快!</text>
+          <!-- Zigzag path -->
+          <polyline points="280,60 310,60 310,45 335,45 335,38 355,38 355,35" fill="none" stroke="#6c5ce7" stroke-width="1.5" opacity=".5"/>
+        </g>
+
+        <!-- ADMM / Proximal -->
+        <g transform="translate(20,280)">
+          <rect x="0" y="0" width="380" height="55" rx="10" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1.2"/>
+          <text x="15" y="18" fill="#fd79a8" font-size="9" font-weight="bold">2010+ ADMM / Proximal Gradient</text>
+          <text x="15" y="38" fill="#888" font-size="10">分布式/大规模场景: ADMM, ISTA, FISTA</text>
+          <text x="15" y="52" fill="#666" font-size="8">近端梯度 + 软阈值，适合分布式计算和在线学习</text>
+          <rect x="300" y="15" width="70" height="25" rx="5" fill="rgba(253,121,168,.1)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="335" y="32" fill="#fd79a8" font-size="8" text-anchor="middle">可分布式</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>从二次规划到坐标下降</h3>
+      <p>LASSO 的目标函数在 βⱼ=0 处不可导（L1 范数的"拐角"），不能直接用梯度下降。求解算法经历了重要演进：</p>
+      <p><strong style="color:var(--gold)">1996 原论文</strong> — Tibshirani 将 L1 约束转化为线性约束（令 βⱼ=βⱼ⁺-βⱼ⁻），用标准二次规划 (QP) 求解。可行但扩展性有限。</p>
+      <p><strong style="color:var(--cyan)">2004 LARS</strong> — Efron 等人提出 Least Angle Regression，可以用近似 OLS 的计算量求出<strong>整条正则化路径</strong>（所有 λ 对应的解），是理论上的突破。</p>
+      <p><strong style="color:var(--purple)">2007 坐标下降</strong> — Friedman、Hastie、Tibshirani 发现对 LASSO 逐坐标优化异常高效。固定其他坐标，每个 βⱼ 的子问题有闭式解（软阈值），反复循环即收敛。实现为 <strong>glmnet</strong> 包，成为事实标准。</p>
+      <div class="formula">坐标下降的核心迭代:<br>β̃ⱼ ← S(Σᵢ xᵢⱼ(yᵢ - ŷᵢ⁽⁻ʲ⁾), λ)<br>其中 S(z,λ) = sign(z)·max(|z|-λ, 0)</div>
+      <div class="key">glmnet (2010) 成为 LASSO 最流行的实现，能在秒级处理百万级稀疏特征。坐标下降之所以高效，是因为 L1 惩罚是可分离的——每个坐标的子问题独立。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 6. Properties ════════ -->
+<div class="section" id="properties">
+  <div class="section-header">
+    <div class="section-num">6</div>
+    <div class="section-title">关键性质与理论保证</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">LASSO 的正则化路径</text>
+        <!-- Regularization path plot -->
+        <g transform="translate(50,40)">
+          <!-- Axes -->
+          <line x1="0" y1="240" x2="320" y2="240" stroke="#555" stroke-width="1.5"/>
+          <line x1="0" y1="240" x2="0" y2="10" stroke="#555" stroke-width="1.5"/>
+          <text x="160" y="265" fill="#888" font-size="10" text-anchor="middle">‖β‖₁ / max‖β‖₁  (→ λ 减小)</text>
+          <text x="-15" y="125" fill="#888" font-size="10" text-anchor="middle" transform="rotate(-90,-15,125)">系数值 βⱼ</text>
+
+          <!-- Zero line -->
+          <line x1="0" y1="140" x2="320" y2="140" stroke="#444" stroke-width="1" stroke-dasharray="3"/>
+
+          <!-- Coefficient paths (different colors for different variables) -->
+          <!-- β1 -->
+          <polyline points="0,140 30,140 60,140 90,138 120,130 150,118 180,100 210,85 240,78 270,72 300,68" fill="none" stroke="#fdcb6e" stroke-width="2"/>
+          <text x="308" y="68" fill="#fdcb6e" font-size="8">β₁</text>
+
+          <!-- β2 -->
+          <polyline points="0,140 30,140 60,140 90,140 120,140 150,140 180,148 210,160 240,168 270,175 300,180" fill="none" stroke="#00cec9" stroke-width="2"/>
+          <text x="308" y="182" fill="#00cec9" font-size="8">β₂</text>
+
+          <!-- β3 - enters late -->
+          <polyline points="0,140 30,140 60,140 90,140 120,140 150,142 180,145 210,150 240,155 270,158 300,160" fill="none" stroke="#6c5ce7" stroke-width="2"/>
+          <text x="308" y="162" fill="#6c5ce7" font-size="8">β₃</text>
+
+          <!-- β4 - zero throughout most -->
+          <polyline points="0,140 30,140 60,140 90,140 120,140 150,140 180,140 210,140 240,140 270,140 300,135" fill="none" stroke="#fd79a8" stroke-width="1.5" stroke-dasharray="3"/>
+          <text x="308" y="135" fill="#fd79a8" font-size="8">β₄</text>
+
+          <!-- β5 -->
+          <polyline points="0,140 30,140 60,140 90,140 120,135 150,125 180,110 210,95 240,80 270,70 300,62" fill="none" stroke="#74b9ff" stroke-width="2"/>
+          <text x="308" y="62" fill="#74b9ff" font-size="8">β₅</text>
+
+          <!-- β6 - noise, stays zero -->
+          <line x1="0" y1="140" x2="300" y2="140" stroke="#555" stroke-width="1" opacity=".3"/>
+          <text x="308" y="143" fill="#555" font-size="8">β₆₋ₚ</text>
+
+          <!-- Annotations -->
+          <line x1="60" y1="10" x2="60" y2="240" stroke="#fdcb6e" stroke-width="1" stroke-dasharray="3" opacity=".3"/>
+          <text x="60" y="280" fill="#fdcb6e" font-size="7" text-anchor="middle">λ 大</text>
+          <text x="60" y="292" fill="#888" font-size="7" text-anchor="middle">所有 β=0</text>
+
+          <line x1="180" y1="10" x2="180" y2="240" stroke="#00cec9" stroke-width="1" stroke-dasharray="3" opacity=".3"/>
+          <text x="180" y="280" fill="#00cec9" font-size="7" text-anchor="middle">λ* (最优)</text>
+          <text x="180" y="292" fill="#888" font-size="7" text-anchor="middle">选出重要变量</text>
+
+          <text x="300" y="280" fill="#888" font-size="7" text-anchor="middle">λ 小</text>
+          <text x="300" y="292" fill="#888" font-size="7" text-anchor="middle">→ OLS</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>正则化路径与变量进入顺序</h3>
+      <p>随着 λ 从大到小变化，LASSO 系数的变化轨迹称为<strong style="color:var(--gold)">正则化路径 (Regularization Path)</strong>：</p>
+      <p>- λ 很大时：所有系数为零（空模型）</p>
+      <p>- λ 逐渐减小：变量按重要性<strong>逐个进入</strong>模型，最重要的变量最先从零变为非零</p>
+      <p>- λ=0 时：退化为 OLS</p>
+      <p>这条路径本身就是一种<strong>变量重要性排序</strong>。</p>
+
+      <h3 style="margin-top:1.2rem">关键理论性质</h3>
+      <p><strong style="color:var(--cyan)">稀疏一致性</strong> — 在一定条件下（不可表示条件 / Irrepresentable Condition），LASSO 能以高概率正确识别真正的非零变量集合。</p>
+      <p><strong style="color:var(--purple)">预测一致性</strong> — 在更宽松的条件下，LASSO 的预测误差以最优速率收敛到零。</p>
+      <div class="key">正则化路径的"分段线性"性质（LASSO 路径是 λ 的分段线性函数）使得 LARS 算法可以用 OLS 的计算量求出完整路径。这在交叉验证选择 λ 时极为高效。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 7. Comparison ════════ -->
+<div class="section" id="comparison">
+  <div class="section-header">
+    <div class="section-num">7</div>
+    <div class="section-title">LASSO vs 其他方法</div>
+  </div>
+
+  <div class="wide-card">
+    <h3>方法全面对比</h3>
+    <table class="cmp-table">
+      <tr>
+        <th>方法</th><th>惩罚项</th><th>变量选择</th><th>多重共线性</th><th>解的形式</th><th>适用场景</th>
+      </tr>
+      <tr>
+        <td style="color:var(--gold);font-weight:600">LASSO (L1)</td>
+        <td>λΣ|βⱼ|</td>
+        <td style="color:#00cec9">是 (稀疏解)</td>
+        <td style="color:#e17055">不稳定 (随机选一个)</td>
+        <td>无闭式 (需迭代)</td>
+        <td>高维、需要特征选择</td>
+      </tr>
+      <tr>
+        <td style="color:var(--purple);font-weight:600">Ridge (L2)</td>
+        <td>λΣβⱼ²</td>
+        <td style="color:#e17055">否 (系数≠0)</td>
+        <td style="color:#00cec9">稳定 (均匀收缩)</td>
+        <td>闭式: (XᵀX+λI)⁻¹Xᵀy</td>
+        <td>多重共线性、所有变量相关</td>
+      </tr>
+      <tr>
+        <td style="color:var(--cyan);font-weight:600">Elastic Net</td>
+        <td>λ₁Σ|βⱼ|+λ₂Σβⱼ²</td>
+        <td style="color:#00cec9">是</td>
+        <td style="color:#00cec9">稳定 (分组效应)</td>
+        <td>无闭式</td>
+        <td>p≫n、相关特征组</td>
+      </tr>
+      <tr>
+        <td style="color:var(--pink);font-weight:600">Best Subset</td>
+        <td>L0: |{j: βⱼ≠0}|≤k</td>
+        <td style="color:#00cec9">是 (最优)</td>
+        <td>—</td>
+        <td>NP-hard (组合搜索)</td>
+        <td>小规模、理论基准</td>
+      </tr>
+      <tr>
+        <td style="font-weight:600;color:var(--blue)">Adaptive LASSO</td>
+        <td>Σwⱼ|βⱼ|</td>
+        <td style="color:#00cec9">是 (Oracle 性质)</td>
+        <td>较稳定</td>
+        <td>无闭式</td>
+        <td>需要渐近 Oracle 性质</td>
+      </tr>
+    </table>
+
+    <div style="margin-top:1.2rem; padding:.8rem 1rem; background:rgba(253,203,110,.04); border-left:3px solid var(--gold); border-radius:0 8px 8px 0;">
+      <p style="font-size:.88rem; color:var(--text); margin:0;">
+        <strong style="color:var(--gold)">LASSO 的局限:</strong>
+        (1) 当 p > n 时，最多选 n 个变量；
+        (2) 在高度相关的变量组中，倾向随机选一个而非全选 → Elastic Net 解决此问题（"分组效应"）；
+        (3) 对大系数有偏估计 → Adaptive LASSO / SCAD 解决此问题。
+      </p>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 8. Extensions ════════ -->
+<div class="section" id="extensions">
+  <div class="section-header">
+    <div class="section-num">8</div>
+    <div class="section-title">后续发展与变体</div>
+  </div>
+
+  <div class="wide-card">
+    <h3>LASSO 引发的研究浪潮</h3>
+    <div class="timeline-wrap">
+      <div class="tl-item">
+        <div class="tl-year">1996 — LASSO</div>
+        <div class="tl-text">Tibshirani 提出 L1 正则化，奠定稀疏建模基础。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2001 — SCAD</div>
+        <div class="tl-text">Fan & Li 提出非凸惩罚 SCAD，实现 Oracle 性质（无偏估计 + 变量选择一致性）。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2004 — LARS</div>
+        <div class="tl-text">Efron et al. 提出 Least Angle Regression，高效计算完整正则化路径。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2005 — Elastic Net</div>
+        <div class="tl-text">Zou & Hastie 混合 L1+L2，解决 LASSO 在相关特征上的不稳定问题。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2006 — Adaptive LASSO</div>
+        <div class="tl-text">Zou 提出加权 L1 惩罚，给不同变量不同惩罚强度，获得 Oracle 性质。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2006 — Group LASSO</div>
+        <div class="tl-text">Yuan & Lin 提出组稀疏，一次选入/排除整组变量（如类别特征的所有 dummy 编码）。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2008 — Compressed Sensing</div>
+        <div class="tl-text">Candès, Tao 等人的 L1 最小化理论——用远少于 Nyquist 的测量恢复稀疏信号，获 Bôcher 奖。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2010 — glmnet</div>
+        <div class="tl-text">Friedman et al. 发布 glmnet 包，坐标下降实现使 LASSO 在工业界大规模应用成为可能。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2014 — Sparse Group LASSO</div>
+        <div class="tl-text">组间稀疏 + 组内稀疏的双层选择，在生物信息学和推荐系统中广泛应用。</div>
+      </div>
+      <div class="tl-item">
+        <div class="tl-year">2016+ — Deep Learning 中的稀疏</div>
+        <div class="tl-text">L1 正则化思想渗透到网络剪枝 (pruning)、稀疏注意力、MoE 等深度学习领域。</div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 9. Impact on RecSys ════════ -->
+<div class="section" id="impact">
+  <div class="section-header">
+    <div class="section-num">9</div>
+    <div class="section-title">对推荐系统的深远影响</div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 420 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="210" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">LASSO → 推荐系统的影响链</text>
+
+        <!-- LASSO center -->
+        <circle cx="210" cy="170" r="40" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="2"/>
+        <text x="210" y="165" fill="#fdcb6e" font-size="12" font-weight="bold" text-anchor="middle">LASSO</text>
+        <text x="210" y="180" fill="#fdcb6e" font-size="9" text-anchor="middle">L1 稀疏</text>
+
+        <!-- Branch 1: Embedding sparsity -->
+        <line x1="175" y1="145" x2="80" y2="65" stroke="#00cec9" stroke-width="1.5" opacity=".5"/>
+        <circle cx="80" cy="60" r="30" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="1.2"/>
+        <text x="80" y="55" fill="#00cec9" font-size="8" text-anchor="middle">Embedding</text>
+        <text x="80" y="67" fill="#00cec9" font-size="8" text-anchor="middle">正则化</text>
+        <text x="80" y="100" fill="#666" font-size="7" text-anchor="middle">稀疏 Embedding</text>
+        <text x="80" y="112" fill="#666" font-size="7" text-anchor="middle">减少存储 90%+</text>
+
+        <!-- Branch 2: Feature selection -->
+        <line x1="250" y1="145" x2="340" y2="65" stroke="#6c5ce7" stroke-width="1.5" opacity=".5"/>
+        <circle cx="340" cy="60" r="30" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="1.2"/>
+        <text x="340" y="55" fill="#6c5ce7" font-size="8" text-anchor="middle">特征</text>
+        <text x="340" y="67" fill="#6c5ce7" font-size="8" text-anchor="middle">选择</text>
+        <text x="340" y="100" fill="#666" font-size="7" text-anchor="middle">CTR 模型中自动</text>
+        <text x="340" y="112" fill="#666" font-size="7" text-anchor="middle">筛选有效特征</text>
+
+        <!-- Branch 3: FM family -->
+        <line x1="175" y1="195" x2="65" y2="260" stroke="#fd79a8" stroke-width="1.5" opacity=".5"/>
+        <circle cx="65" cy="265" r="30" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.2"/>
+        <text x="65" y="260" fill="#fd79a8" font-size="8" text-anchor="middle">FM/DeepFM</text>
+        <text x="65" y="272" fill="#fd79a8" font-size="8" text-anchor="middle">稀疏交互</text>
+        <text x="65" y="305" fill="#666" font-size="7" text-anchor="middle">稀疏特征的因式</text>
+        <text x="65" y="317" fill="#666" font-size="7" text-anchor="middle">分解交互建模</text>
+
+        <!-- Branch 4: Network pruning -->
+        <line x1="245" y1="198" x2="340" y2="260" stroke="#74b9ff" stroke-width="1.5" opacity=".5"/>
+        <circle cx="340" cy="265" r="30" fill="rgba(116,185,255,.08)" stroke="#74b9ff" stroke-width="1.2"/>
+        <text x="340" y="260" fill="#74b9ff" font-size="8" text-anchor="middle">模型</text>
+        <text x="340" y="272" fill="#74b9ff" font-size="8" text-anchor="middle">压缩</text>
+        <text x="340" y="305" fill="#666" font-size="7" text-anchor="middle">L1 剪枝 推荐模型</text>
+        <text x="340" y="317" fill="#666" font-size="7" text-anchor="middle">线上推理加速</text>
+
+        <!-- Branch 5: MoE -->
+        <line x1="210" y1="210" x2="210" y2="280" stroke="#fdcb6e" stroke-width="1.5" opacity=".5"/>
+        <circle cx="210" cy="290" r="30" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width="1.2"/>
+        <text x="210" y="285" fill="#fdcb6e" font-size="8" text-anchor="middle">MoE</text>
+        <text x="210" y="297" fill="#fdcb6e" font-size="8" text-anchor="middle">稀疏激活</text>
+        <text x="210" y="330" fill="#666" font-size="7" text-anchor="middle">Top-k 门控 = 稀疏选择</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3>LASSO 思想在推荐系统中的 5 大应用</h3>
+
+      <p><strong style="color:var(--cyan)">1. Embedding 稀疏化</strong> — 在推荐系统中，Embedding 表占据 90%+ 的参数量。L1 正则化可以学习稀疏 Embedding，大幅减少存储和计算开销（如 DeepLight, AMTL）。</p>
+
+      <p><strong style="color:var(--purple)">2. 自动特征选择</strong> — CTR 模型中可能有数千个特征，L1 惩罚自动将不重要特征的权重压至零，替代人工特征筛选。</p>
+
+      <p><strong style="color:var(--pink)">3. FM 族模型基础</strong> — Factorization Machines 本质上是在稀疏特征空间中建模交互。LASSO 的稀疏特征处理思想直接影响了 FM 的设计哲学。</p>
+
+      <p><strong style="color:var(--blue)">4. 推荐模型压缩</strong> — 工业推荐系统需要在线推理，L1 正则化驱动的结构化剪枝（权重归零→删除连接/神经元）是模型压缩的核心技术。</p>
+
+      <p><strong style="color:var(--gold)">5. MoE 稀疏激活</strong> — MoE 中的 Top-k 门控本质上是一种稀疏选择机制，与 LASSO 的 L1 约束在精神上一脉相承——都是用稀疏性换效率。</p>
+
+      <div class="key">
+        从高维稀疏特征到稀疏 Embedding，从 L1 特征选择到 MoE 稀疏激活——LASSO 的核心思想「用稀疏性 (sparsity) 在模型容量和计算效率之间取得最佳平衡」贯穿了推荐系统技术的整个演进历程。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ Footer ════════ -->
+<footer>
+  LASSO Deep Dive · Regression Shrinkage and Selection via the Lasso (Tibshirani, 1996)<br>
+  <a href="../sparse-models.html">← 返回 Sparse Models 全景图</a> · LLM4Rec Research · 2026
+</footer>
+
+<script>
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold:.08, rootMargin:'0px 0px -40px 0px' });
+document.querySelectorAll('.row, .wide-card').forEach(el => obs.observe(el));
+</script>
+</body>
+</html>

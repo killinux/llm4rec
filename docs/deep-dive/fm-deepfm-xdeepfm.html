@@ -1,0 +1,1090 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>FM → DeepFM → xDeepFM 演进深度解读</title>
+<style>
+  :root {
+    --bg: #08080d;
+    --card: #101018;
+    --border: #1a1a2a;
+    --gold: #fdcb6e;
+    --gold2: #e17055;
+    --purple: #6c5ce7;
+    --cyan: #00cec9;
+    --pink: #fd79a8;
+    --blue: #74b9ff;
+    --green: #55efc4;
+    --text: #dddde4;
+    --text2: #7e7e98;
+    --text3: #55556a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg); color: var(--text); line-height:1.8; overflow-x:hidden;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    position:relative; overflow:hidden;
+  }
+  .hero::before {
+    content:''; position:absolute; inset:0;
+    background:
+      radial-gradient(ellipse 500px 400px at 20% 30%, rgba(108,92,231,.12), transparent),
+      radial-gradient(ellipse 450px 350px at 80% 60%, rgba(0,206,201,.1), transparent),
+      radial-gradient(ellipse 350px 250px at 50% 80%, rgba(253,121,168,.08), transparent);
+    animation: heroDrift 16s ease-in-out infinite alternate;
+  }
+  @keyframes heroDrift { 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(15px,-10px) scale(1.04)} }
+  .hero-inner { position:relative; z-index:1; max-width:950px; text-align:center; padding:2rem; }
+  .hero-badge {
+    display:inline-block; padding:.3rem .9rem; border-radius:999px;
+    background:rgba(108,92,231,.1); border:1px solid rgba(108,92,231,.25);
+    color:var(--purple); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
+    margin-bottom:1.2rem;
+  }
+  .hero h1 {
+    font-size:clamp(2rem,5vw,3.2rem); font-weight:800;
+    background:linear-gradient(135deg, #6c5ce7, #00cec9, #fd79a8);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    line-height:1.25; margin-bottom:.8rem;
+  }
+  .hero .subtitle { font-size:clamp(.9rem,2vw,1.15rem); color:var(--text2); max-width:720px; margin:0 auto; }
+  /* Three model badges in hero */
+  .hero-models { display:flex; gap:1.5rem; justify-content:center; margin-top:2rem; flex-wrap:wrap; }
+  .hero-models .model-badge {
+    padding:.8rem 1.5rem; border-radius:14px; text-align:center; min-width:160px;
+  }
+  .hero-models .model-badge .name { font-size:1.3rem; font-weight:800; }
+  .hero-models .model-badge .year { font-size:.78rem; opacity:.7; }
+  .hero-models .model-badge .desc { font-size:.75rem; margin-top:.3rem; opacity:.6; }
+  .mb-fm   { background:rgba(253,203,110,.08); border:1px solid rgba(253,203,110,.2); }
+  .mb-fm .name { color:var(--gold); }
+  .mb-dfm  { background:rgba(108,92,231,.08); border:1px solid rgba(108,92,231,.2); }
+  .mb-dfm .name { color:var(--purple); }
+  .mb-xdfm { background:rgba(0,206,201,.08); border:1px solid rgba(0,206,201,.2); }
+  .mb-xdfm .name { color:var(--cyan); }
+  .arrow-between { display:flex; align-items:center; color:var(--text3); font-size:1.4rem; }
+  .scroll-arrow {
+    position:absolute; bottom:2rem; left:50%; transform:translateX(-50%);
+    animation: bounce 2s infinite; z-index:1;
+  }
+  @keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0);opacity:.5} 50%{transform:translateX(-50%) translateY(10px);opacity:1} }
+  .scroll-arrow svg { width:26px; height:26px; stroke:var(--text3); fill:none; stroke-width:2; }
+
+  /* ── Nav ── */
+  .nav {
+    position:sticky; top:0; z-index:100;
+    background:rgba(8,8,13,.88); backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    display:flex; justify-content:center; gap:.7rem; padding:.7rem 1rem; flex-wrap:wrap;
+  }
+  .nav a {
+    padding:.32rem .85rem; border-radius:999px;
+    border:1px solid var(--border); background:transparent;
+    color:var(--text2); font-size:.78rem; text-decoration:none; transition:.3s;
+  }
+  .nav a:hover { border-color:var(--purple); color:#fff; background:rgba(108,92,231,.08); }
+
+  /* ── Section ── */
+  .section { max-width:1100px; margin:0 auto; padding:4rem 1.5rem 2rem; }
+  .section-header { display:flex; align-items:center; gap:.8rem; margin-bottom:2rem; }
+  .section-num {
+    width:40px; height:40px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.1rem; font-weight:800; color:#000; flex-shrink:0;
+  }
+  .sn-gold   { background:linear-gradient(135deg, var(--gold), var(--gold2)); }
+  .sn-purple { background:linear-gradient(135deg, var(--purple), #a29bfe); }
+  .sn-cyan   { background:linear-gradient(135deg, var(--cyan), #0984e3); }
+  .sn-pink   { background:linear-gradient(135deg, var(--pink), #e84393); }
+  .sn-green  { background:linear-gradient(135deg, var(--green), #00b894); }
+  .section-title { font-size:1.5rem; font-weight:700; color:#fff; }
+
+  /* ── Row (left vis, right txt) ── */
+  .row {
+    display:grid; grid-template-columns:1fr 1fr; gap:0;
+    margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .row.visible { opacity:1; transform:translateY(0); }
+  .row .vis {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px 0 0 16px; padding:1.8rem;
+    display:flex; align-items:center; justify-content:center; min-height:320px;
+  }
+  .row .txt {
+    background:var(--card); border:1px solid var(--border); border-left:none;
+    border-radius:0 16px 16px 0; padding:1.8rem 2rem;
+    display:flex; flex-direction:column; justify-content:center;
+  }
+  @media(max-width:860px){
+    .row { grid-template-columns:1fr; }
+    .row .vis { border-radius:16px 16px 0 0; min-height:250px; }
+    .row .txt { border-radius:0 0 16px 16px; border-left:1px solid var(--border); border-top:none; }
+  }
+  .row .vis svg { width:100%; max-width:440px; height:auto; }
+  .row .txt h3 { font-size:1.1rem; font-weight:700; margin-bottom:.5rem; }
+  .h-gold { color:var(--gold); }
+  .h-purple { color:var(--purple); }
+  .h-cyan { color:var(--cyan); }
+  .h-pink { color:var(--pink); }
+  .row .txt p { font-size:.88rem; color:var(--text2); margin-bottom:.7rem; }
+  .row .txt .formula {
+    font-family:'Courier New',monospace; font-size:.9rem;
+    padding:.65rem 1rem; border-radius:8px;
+    background:rgba(253,203,110,.04); border:1px solid rgba(253,203,110,.12);
+    color:var(--gold); margin:.5rem 0;
+  }
+  .formula-purple { background:rgba(108,92,231,.04)!important; border-color:rgba(108,92,231,.15)!important; color:var(--purple)!important; }
+  .formula-cyan { background:rgba(0,206,201,.04)!important; border-color:rgba(0,206,201,.15)!important; color:var(--cyan)!important; }
+  .row .txt .key {
+    font-size:.84rem; padding:.7rem 1rem;
+    border-left:3px solid var(--purple); border-radius:0 8px 8px 0;
+    color:var(--text); line-height:1.7;
+  }
+  .key-gold   { background:rgba(253,203,110,.05); border-left-color:var(--gold)!important; }
+  .key-purple { background:rgba(108,92,231,.05); border-left-color:var(--purple)!important; }
+  .key-cyan   { background:rgba(0,206,201,.05); border-left-color:var(--cyan)!important; }
+  .key-pink   { background:rgba(253,121,168,.05); border-left-color:var(--pink)!important; }
+  .row .txt .tags { display:flex; flex-wrap:wrap; gap:.35rem; margin:.5rem 0; }
+  .row .txt .tags span {
+    font-size:.7rem; padding:.18rem .5rem; border-radius:5px;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--text);
+  }
+
+  /* ── Wide card ── */
+  .wide-card {
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:2rem; margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .wide-card.visible { opacity:1; transform:translateY(0); }
+  .wide-card h3 { font-size:1.15rem; font-weight:700; color:var(--purple); margin-bottom:1rem; }
+  .wide-card p { font-size:.88rem; color:var(--text2); margin-bottom:.8rem; }
+
+  /* ── Table ── */
+  .cmp-table { width:100%; border-collapse:collapse; margin:1rem 0; }
+  .cmp-table th {
+    text-align:left; padding:.6rem .8rem; font-size:.8rem;
+    color:var(--purple); border-bottom:1px solid var(--border);
+    background:rgba(108,92,231,.04);
+  }
+  .cmp-table td {
+    padding:.5rem .8rem; font-size:.82rem; color:var(--text2);
+    border-bottom:1px solid rgba(255,255,255,.03);
+  }
+  .cmp-table tr:hover td { background:rgba(255,255,255,.02); }
+
+  /* ── Footer ── */
+  footer {
+    text-align:center; padding:3rem 1rem; color:var(--text3);
+    font-size:.78rem; border-top:1px solid var(--border);
+  }
+  footer a { color:var(--purple); text-decoration:none; }
+</style>
+</head>
+<body>
+
+<!-- ════════ Hero ════════ -->
+<section class="hero" id="top">
+  <div class="hero-inner">
+    <div class="hero-badge">Deep Dive · CTR Models Evolution</div>
+    <h1>FM → DeepFM → xDeepFM</h1>
+    <p class="subtitle">从因式分解到深度交互：CTR 预估模型的三次关键跃迁<br>稀疏特征交互建模的演进全景</p>
+    <div class="hero-models">
+      <div class="model-badge mb-fm">
+        <div class="name">FM</div>
+        <div class="year">2010 · Rendle</div>
+        <div class="desc">二阶交互的因式分解</div>
+      </div>
+      <div class="arrow-between">→</div>
+      <div class="model-badge mb-dfm">
+        <div class="name">DeepFM</div>
+        <div class="year">2017 · Huawei</div>
+        <div class="desc">FM + DNN 共享 Embedding</div>
+      </div>
+      <div class="arrow-between">→</div>
+      <div class="model-badge mb-xdfm">
+        <div class="name">xDeepFM</div>
+        <div class="year">2018 · Microsoft</div>
+        <div class="desc">CIN 显式高阶 + DNN 隐式</div>
+      </div>
+    </div>
+  </div>
+  <div class="scroll-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></div>
+</section>
+
+<!-- ════════ Nav ════════ -->
+<nav class="nav">
+  <a href="#problem">核心问题</a>
+  <a href="#fm">FM 原理</a>
+  <a href="#fm-limit">FM 局限</a>
+  <a href="#deepfm">DeepFM 原理</a>
+  <a href="#deepfm-vs-wd">DeepFM vs Wide&Deep</a>
+  <a href="#deepfm-limit">DeepFM 局限</a>
+  <a href="#xdeepfm">xDeepFM 原理</a>
+  <a href="#cin">CIN 详解</a>
+  <a href="#bitvec">Bit vs Vector</a>
+  <a href="#compare">全面对比</a>
+  <a href="#choose">如何选择</a>
+</nav>
+
+<!-- ════════ 1. Problem ════════ -->
+<div class="section" id="problem">
+  <div class="section-header">
+    <div class="section-num sn-pink">1</div>
+    <div class="section-title">核心问题：稀疏特征如何交互?</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">CTR 预估的特征交互挑战</text>
+        <!-- Sparse input -->
+        <g transform="translate(20,42)">
+          <text x="200" y="12" fill="#888" font-size="10" text-anchor="middle">用户点击广告的概率 = f(稀疏特征交互)</text>
+          <rect x="0" y="22" width="400" height="45" rx="8" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="10" y="40" fill="#fd79a8" font-size="8">UserID</text>
+          <rect x="10" y="45" width="40" height="14" rx="3" fill="#fd79a8" opacity=".3"/>
+          <text x="60" y="40" fill="#fd79a8" font-size="8">Gender</text>
+          <rect x="60" y="45" width="25" height="14" rx="3" fill="#fd79a8" opacity=".3"/>
+          <text x="95" y="40" fill="#6c5ce7" font-size="8">AdID</text>
+          <rect x="95" y="45" width="40" height="14" rx="3" fill="#6c5ce7" opacity=".3"/>
+          <text x="145" y="40" fill="#6c5ce7" font-size="8">Category</text>
+          <rect x="145" y="45" width="30" height="14" rx="3" fill="#6c5ce7" opacity=".3"/>
+          <text x="185" y="40" fill="#00cec9" font-size="8">Time</text>
+          <rect x="185" y="45" width="25" height="14" rx="3" fill="#00cec9" opacity=".3"/>
+          <text x="220" y="40" fill="#00cec9" font-size="8">Device</text>
+          <rect x="220" y="45" width="25" height="14" rx="3" fill="#00cec9" opacity=".3"/>
+          <text x="260" y="52" fill="#444" font-size="20">...</text>
+          <text x="310" y="52" fill="#888" font-size="8">百万维 one-hot 稀疏向量</text>
+        </g>
+        <!-- Feature interaction levels -->
+        <g transform="translate(20,115)">
+          <!-- 1st order -->
+          <rect x="0" y="0" width="400" height="40" rx="8" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="15" y="16" fill="#fdcb6e" font-size="10" font-weight="bold">一阶 (线性)</text>
+          <text x="15" y="32" fill="#888" font-size="9">w₁·Gender + w₂·Time + ... (各特征独立贡献)</text>
+          <text x="350" y="25" fill="#666" font-size="8">LR 能做</text>
+        </g>
+        <g transform="translate(20,165)">
+          <!-- 2nd order -->
+          <rect x="0" y="0" width="400" height="40" rx="8" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="15" y="16" fill="#6c5ce7" font-size="10" font-weight="bold">二阶 (两两交互)</text>
+          <text x="15" y="32" fill="#888" font-size="9">Gender×Category, Time×Device, ... (特征间的配对效应)</text>
+          <text x="350" y="25" fill="#fdcb6e" font-size="8" font-weight="bold">FM 能做</text>
+        </g>
+        <g transform="translate(20,215)">
+          <!-- Higher order -->
+          <rect x="0" y="0" width="400" height="40" rx="8" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1"/>
+          <text x="15" y="16" fill="#00cec9" font-size="10" font-weight="bold">高阶 (多特征组合)</text>
+          <text x="15" y="32" fill="#888" font-size="9">Gender×Category×Time, ... (复杂的组合模式)</text>
+          <text x="320" y="25" fill="#00cec9" font-size="8" font-weight="bold">DeepFM / xDeepFM</text>
+        </g>
+        <!-- Bottom example -->
+        <rect x="20" y="270" width="400" height="38" rx="8" fill="rgba(253,121,168,.04)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="220" y="286" fill="#fd79a8" font-size="9" text-anchor="middle">例: 「年轻女性」+「美妆类广告」+「晚间时段」→ 高点击率</text>
+        <text x="220" y="300" fill="#888" font-size="8" text-anchor="middle">这是一个三阶交互，FM 无法直接捕捉</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">为什么特征交互如此重要?</h3>
+      <p>CTR (Click-Through Rate) 预估的核心挑战是从<strong>高维稀疏特征</strong>中学习有效的特征交互模式。</p>
+      <p>单独看「性别=女」和「广告类目=美妆」可能各自有一定的点击倾向，但它们的<strong>组合效应</strong>远大于各自贡献之和。</p>
+      <p>特征交互分为不同阶数：</p>
+      <p><strong style="color:var(--gold)">一阶</strong> — 每个特征独立贡献，线性模型 (LR) 即可</p>
+      <p><strong style="color:var(--purple)">二阶</strong> — 两个特征配对交互，FM 通过分解权重矩阵高效建模</p>
+      <p><strong style="color:var(--cyan)">高阶</strong> — 三个及以上特征的组合模式，需要 DNN 或 CIN</p>
+      <div class="key key-pink">FM → DeepFM → xDeepFM 的演进主线就是：<strong>如何更好、更高效、更可控地建模越来越高阶的特征交互</strong>。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 2. FM ════════ -->
+<div class="section" id="fm">
+  <div class="section-header">
+    <div class="section-num sn-gold">2</div>
+    <div class="section-title">FM — Factorization Machines (2010)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">FM 架构: 分解的二阶交互</text>
+        <!-- Input layer -->
+        <g transform="translate(30,280)">
+          <rect x="0" y="0" width="380" height="35" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="22" fill="#fdcb6e" font-size="10" text-anchor="middle">稀疏输入 x (百万维 one-hot)</text>
+        </g>
+        <!-- Embedding layer -->
+        <g transform="translate(30,215)">
+          <rect x="0" y="0" width="380" height="45" rx="8" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Embedding Layer</text>
+          <!-- Field vectors -->
+          <rect x="15" y="25" width="45" height="14" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="37" y="35" fill="#fff" font-size="7" text-anchor="middle">v₁</text>
+          <rect x="70" y="25" width="45" height="14" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="92" y="35" fill="#fff" font-size="7" text-anchor="middle">v₂</text>
+          <rect x="125" y="25" width="45" height="14" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="147" y="35" fill="#fff" font-size="7" text-anchor="middle">v₃</text>
+          <rect x="180" y="25" width="45" height="14" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="202" y="35" fill="#fff" font-size="7" text-anchor="middle">v₄</text>
+          <rect x="235" y="25" width="45" height="14" rx="3" fill="#fdcb6e" opacity=".3"/>
+          <text x="257" y="35" fill="#fff" font-size="7" text-anchor="middle">v₅</text>
+          <text x="300" y="35" fill="#888" font-size="9">... (每个特征→k维向量)</text>
+        </g>
+        <!-- Arrows up -->
+        <line x1="220" y1="280" x2="220" y2="260" stroke="#888" stroke-width="1" opacity=".4"/>
+        <!-- Interaction layer -->
+        <g transform="translate(30,120)">
+          <rect x="0" y="0" width="380" height="75" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="190" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">二阶交互层 (Pairwise Inner Product)</text>
+          <!-- Inner product pairs -->
+          <text x="50" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">⟨v₁,v₂⟩</text>
+          <text x="120" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">⟨v₁,v₃⟩</text>
+          <text x="190" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">⟨v₂,v₃⟩</text>
+          <text x="260" y="42" fill="#fdcb6e" font-size="9" text-anchor="middle">⟨v₂,v₄⟩</text>
+          <text x="335" y="42" fill="#888" font-size="9" text-anchor="middle">...</text>
+          <text x="190" y="65" fill="#888" font-size="9" text-anchor="middle">共 C(n,2) = n(n-1)/2 个交互对</text>
+        </g>
+        <line x1="220" y1="215" x2="220" y2="195" stroke="#888" stroke-width="1" opacity=".4"/>
+        <!-- Linear + interaction → output -->
+        <g transform="translate(30,50)">
+          <rect x="80" y="0" width="220" height="50" rx="10" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="190" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">输出</text>
+          <text x="190" y="40" fill="#888" font-size="9" text-anchor="middle">ŷ = w₀ + Σwᵢxᵢ + Σᵢ&lt;ⱼ ⟨vᵢ,vⱼ⟩xᵢxⱼ</text>
+        </g>
+        <line x1="220" y1="120" x2="220" y2="100" stroke="#888" stroke-width="1" opacity=".4"/>
+        <!-- Complexity note -->
+        <text x="420" y="170" fill="#fdcb6e" font-size="9" text-anchor="end">O(kn)</text>
+        <text x="420" y="185" fill="#888" font-size="7" text-anchor="end">而非 O(kn²)</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">FM: 用分解的隐向量建模二阶交互</h3>
+      <p><strong>核心公式:</strong></p>
+      <div class="formula">ŷ = w₀ + Σᵢ wᵢxᵢ + Σᵢ Σⱼ₌ᵢ₊₁ ⟨vᵢ, vⱼ⟩ · xᵢxⱼ</div>
+      <p>三个组成部分：</p>
+      <p><strong style="color:var(--text)">w₀</strong> — 全局偏置</p>
+      <p><strong style="color:var(--text)">Σwᵢxᵢ</strong> — 一阶线性项（等同于 LR）</p>
+      <p><strong style="color:var(--gold)">Σ⟨vᵢ,vⱼ⟩xᵢxⱼ</strong> — 二阶交互项（FM 的核心创新）</p>
+      <p><strong>关键洞察:</strong> 不直接学习 n×n 的交互权重矩阵 W（参数太多、稀疏数据学不动），而是将其分解为：</p>
+      <div class="formula">wᵢⱼ ≈ ⟨vᵢ, vⱼ⟩ = Σₖ vᵢₖ · vⱼₖ</div>
+      <p>每个特征用一个 k 维隐向量 vᵢ 表示，交互权重 = 隐向量的内积。</p>
+      <div class="key key-gold"><strong>FM 的天才之处:</strong> 通过数学变换，复杂度从 O(kn²) 降到 <strong>O(kn)</strong>。而且即使特征 i 和 j 从未在训练数据中共同出现，只要它们各自与其他特征有过交互，就能通过隐向量泛化出 wᵢⱼ。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 3. FM Limitation ════════ -->
+<div class="section" id="fm-limit">
+  <div class="section-header">
+    <div class="section-num sn-gold">3</div>
+    <div class="section-title">FM 的局限</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 280" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">FM 只能看到「两两」的世界</text>
+        <!-- 2nd order only -->
+        <g transform="translate(30,50)">
+          <rect x="0" y="0" width="180" height="95" rx="10" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="90" y="20" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">FM 能做 ✓</text>
+          <text x="90" y="42" fill="#888" font-size="9" text-anchor="middle">二阶: A × B</text>
+          <!-- Two nodes connected -->
+          <circle cx="55" cy="68" r="12" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="55" y="72" fill="#fdcb6e" font-size="8" text-anchor="middle">A</text>
+          <circle cx="125" cy="68" r="12" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="125" y="72" fill="#fdcb6e" font-size="8" text-anchor="middle">B</text>
+          <line x1="67" y1="68" x2="113" y2="68" stroke="#fdcb6e" stroke-width="2"/>
+        </g>
+        <g transform="translate(230,50)">
+          <rect x="0" y="0" width="180" height="95" rx="10" fill="rgba(225,112,85,.06)" stroke="#e17055" stroke-width="1.5"/>
+          <text x="90" y="20" fill="#e17055" font-size="10" font-weight="bold" text-anchor="middle">FM 做不到 ✗</text>
+          <text x="90" y="42" fill="#888" font-size="9" text-anchor="middle">高阶: A × B × C</text>
+          <!-- Three nodes triangle -->
+          <circle cx="55" cy="60" r="12" fill="rgba(225,112,85,.1)" stroke="#e17055" stroke-width="1.5"/>
+          <text x="55" y="64" fill="#e17055" font-size="8" text-anchor="middle">A</text>
+          <circle cx="125" cy="60" r="12" fill="rgba(225,112,85,.1)" stroke="#e17055" stroke-width="1.5"/>
+          <text x="125" y="64" fill="#e17055" font-size="8" text-anchor="middle">B</text>
+          <circle cx="90" cy="85" r="12" fill="rgba(225,112,85,.1)" stroke="#e17055" stroke-width="1.5"/>
+          <text x="90" y="89" fill="#e17055" font-size="8" text-anchor="middle">C</text>
+          <line x1="67" y1="60" x2="113" y2="60" stroke="#e17055" stroke-width="1.5" stroke-dasharray="3"/>
+          <line x1="60" y1="70" x2="83" y2="78" stroke="#e17055" stroke-width="1.5" stroke-dasharray="3"/>
+          <line x1="120" y1="70" x2="97" y2="78" stroke="#e17055" stroke-width="1.5" stroke-dasharray="3"/>
+          <text x="90" y="62" fill="#e17055" font-size="14" text-anchor="middle">?</text>
+        </g>
+        <!-- Real world example -->
+        <g transform="translate(30,170)">
+          <rect x="0" y="0" width="380" height="90" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="190" y="20" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">真实场景需要高阶交互</text>
+          <text x="15" y="42" fill="#888" font-size="9">「年轻女性」+「晚间」+「美妆广告」→ 极高点击率</text>
+          <text x="15" y="60" fill="#888" font-size="9">「中年男性」+「工作日」+「3C 广告」+「一线城市」→ 高转化率</text>
+          <text x="15" y="80" fill="#e17055" font-size="9">这些三阶、四阶交互，FM 无法直接建模!</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">FM 的两大局限</h3>
+      <p><strong style="color:#e17055">局限一：只能建模二阶交互</strong></p>
+      <p>FM 的交互项 Σ⟨vᵢ,vⱼ⟩xᵢxⱼ 只涉及两个特征的配对。现实中大量有价值的模式来自三个及以上特征的组合（如 性别×年龄×广告类目×时间段）。</p>
+      <p><strong style="color:#e17055">局限二：交互是线性组合</strong></p>
+      <p>即使二阶交互，也只是简单的内积（线性操作）。无法捕获非线性的复杂交互模式。</p>
+      <p>理论上可以扩展到高阶 FM (d-way FM):</p>
+      <div class="formula">ŷ = w₀ + Σwᵢxᵢ + Σ⟨vᵢ,vⱼ⟩xᵢxⱼ + Σ⟨vᵢ,vⱼ,vₖ⟩xᵢxⱼxₖ + ...</div>
+      <p>但复杂度呈指数增长，实际中很少使用超过二阶。</p>
+      <div class="key key-gold"><strong>这就是 DeepFM 的动机:</strong> 用 DNN 来自动学习高阶非线性交互，同时保留 FM 对二阶交互的高效建模。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 4. DeepFM ════════ -->
+<div class="section" id="deepfm">
+  <div class="section-header">
+    <div class="section-num sn-purple">4</div>
+    <div class="section-title">DeepFM — FM + DNN 共享 Embedding (2017)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DeepFM 架构</text>
+        <!-- Shared Embedding -->
+        <g transform="translate(20,295)">
+          <rect x="0" y="0" width="400" height="45" rx="10" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="2"/>
+          <text x="200" y="18" fill="#00cec9" font-size="11" font-weight="bold" text-anchor="middle">Shared Embedding Layer</text>
+          <rect x="15" y="25" width="35" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="58" y="25" width="35" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="101" y="25" width="35" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="144" y="25" width="35" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <rect x="187" y="25" width="35" height="12" rx="3" fill="#00cec9" opacity=".3"/>
+          <text x="240" y="35" fill="#888" font-size="8">e₁  e₂  e₃  e₄  e₅ ...</text>
+        </g>
+        <!-- FM Component -->
+        <g transform="translate(20,110)">
+          <rect x="0" y="0" width="185" height="155" rx="12" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1.5"/>
+          <text x="92" y="22" fill="#fdcb6e" font-size="11" font-weight="bold" text-anchor="middle">FM Component</text>
+          <!-- 1st order -->
+          <rect x="15" y="35" width="155" height="30" rx="6" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="92" y="55" fill="#fdcb6e" font-size="9" text-anchor="middle">一阶: Σwᵢxᵢ</text>
+          <!-- 2nd order -->
+          <rect x="15" y="75" width="155" height="30" rx="6" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="92" y="95" fill="#fdcb6e" font-size="9" text-anchor="middle">二阶: Σ⟨eᵢ,eⱼ⟩</text>
+          <!-- combine -->
+          <text x="92" y="125" fill="#fdcb6e" font-size="9" text-anchor="middle">y_FM = w₀ + 一阶 + 二阶</text>
+          <text x="92" y="145" fill="#888" font-size="8" text-anchor="middle">低阶交互 (显式)</text>
+        </g>
+        <!-- DNN Component -->
+        <g transform="translate(235,110)">
+          <rect x="0" y="0" width="185" height="155" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="92" y="22" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">DNN Component</text>
+          <!-- Hidden layers -->
+          <rect x="20" y="38" width="145" height="16" rx="4" fill="#6c5ce7" opacity=".12"/>
+          <text x="92" y="50" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 1 (ReLU)</text>
+          <rect x="30" y="60" width="125" height="16" rx="4" fill="#6c5ce7" opacity=".18"/>
+          <text x="92" y="72" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 2 (ReLU)</text>
+          <rect x="40" y="82" width="105" height="16" rx="4" fill="#6c5ce7" opacity=".24"/>
+          <text x="92" y="94" fill="#888" font-size="7" text-anchor="middle">Hidden Layer 3 (ReLU)</text>
+          <text x="92" y="125" fill="#6c5ce7" font-size="9" text-anchor="middle">y_DNN = DNN(concat(eᵢ))</text>
+          <text x="92" y="145" fill="#888" font-size="8" text-anchor="middle">高阶交互 (隐式)</text>
+        </g>
+        <!-- Arrows from embedding to both -->
+        <line x1="112" y1="295" x2="112" y2="265" stroke="#fdcb6e" stroke-width="1.2" opacity=".5"/>
+        <line x1="327" y1="295" x2="327" y2="265" stroke="#6c5ce7" stroke-width="1.2" opacity=".5"/>
+        <!-- Output -->
+        <g transform="translate(110,45)">
+          <rect x="0" y="0" width="220" height="40" rx="10" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="110" y="16" fill="#fd79a8" font-size="11" font-weight="bold" text-anchor="middle">Output Layer</text>
+          <text x="110" y="34" fill="#888" font-size="9" text-anchor="middle">ŷ = σ(y_FM + y_DNN)</text>
+        </g>
+        <line x1="112" y1="110" x2="185" y2="85" stroke="#fdcb6e" stroke-width="1" opacity=".4"/>
+        <line x1="327" y1="110" x2="255" y2="85" stroke="#6c5ce7" stroke-width="1" opacity=".4"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">DeepFM: 低阶 + 高阶的完美互补</h3>
+      <p>DeepFM 的设计哲学：<strong style="color:var(--gold)">FM 擅长低阶显式交互</strong>，<strong style="color:var(--purple)">DNN 擅长高阶隐式交互</strong>，让它们各司其职。</p>
+      <div class="formula formula-purple">ŷ = σ(y_FM + y_DNN)<br>y_FM  = w₀ + Σwᵢxᵢ + Σ⟨eᵢ,eⱼ⟩<br>y_DNN = DNN(concat(e₁, e₂, ..., eₘ))</div>
+      <p>架构的三个关键设计：</p>
+      <p><strong style="color:var(--cyan)">1. 共享 Embedding</strong> — FM 和 DNN 使用同一组 Embedding 向量，互相增强学习</p>
+      <p><strong style="color:var(--gold)">2. FM 组件</strong> — 保留 FM 的一阶和二阶交互建模能力</p>
+      <p><strong style="color:var(--purple)">3. DNN 组件</strong> — 将所有 field 的 Embedding 拼接后送入多层全连接网络，隐式学习任意阶交互</p>
+      <div class="key key-purple"><strong>共享 Embedding 是核心创新。</strong>FM 侧的梯度和 DNN 侧的梯度共同优化同一组 Embedding，使得低阶交互信号和高阶交互信号互相补充，比分别训练效果好。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 5. DeepFM vs Wide&Deep ════════ -->
+<div class="section" id="deepfm-vs-wd">
+  <div class="section-header">
+    <div class="section-num sn-purple">5</div>
+    <div class="section-title">DeepFM vs Wide&Deep</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DeepFM 对 Wide&Deep 的改进</text>
+        <!-- Wide&Deep -->
+        <g transform="translate(15,45)">
+          <rect x="0" y="0" width="195" height="230" rx="12" fill="rgba(225,112,85,.04)" stroke="#e17055" stroke-width="1.2"/>
+          <text x="97" y="22" fill="#e17055" font-size="11" font-weight="bold" text-anchor="middle">Wide & Deep</text>
+          <!-- Wide side -->
+          <rect x="10" y="35" width="80" height="80" rx="8" fill="rgba(225,112,85,.06)" stroke="#e17055" stroke-width=".8"/>
+          <text x="50" y="55" fill="#e17055" font-size="9" text-anchor="middle">Wide</text>
+          <text x="50" y="72" fill="#888" font-size="7" text-anchor="middle">手工交叉特征</text>
+          <text x="50" y="85" fill="#888" font-size="7" text-anchor="middle">φ(x)</text>
+          <text x="50" y="100" fill="#e17055" font-size="7" text-anchor="middle">需要特征工程!</text>
+          <!-- Deep side -->
+          <rect x="105" y="35" width="80" height="80" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width=".8"/>
+          <text x="145" y="55" fill="#6c5ce7" font-size="9" text-anchor="middle">Deep</text>
+          <text x="145" y="72" fill="#888" font-size="7" text-anchor="middle">独立 Embedding</text>
+          <text x="145" y="85" fill="#888" font-size="7" text-anchor="middle">→ DNN</text>
+          <!-- Problem arrows -->
+          <text x="97" y="140" fill="#e17055" font-size="8" text-anchor="middle">Wide 和 Deep 的</text>
+          <text x="97" y="155" fill="#e17055" font-size="8" text-anchor="middle">Embedding 不共享</text>
+          <!-- Disadvantages -->
+          <text x="15" y="180" fill="#e17055" font-size="8">✗ Wide 侧需要手工特征工程</text>
+          <text x="15" y="198" fill="#e17055" font-size="8">✗ Wide/Deep 输入表示不同</text>
+          <text x="15" y="216" fill="#e17055" font-size="8">✗ 两侧梯度不共享</text>
+        </g>
+        <!-- DeepFM -->
+        <g transform="translate(230,45)">
+          <rect x="0" y="0" width="195" height="230" rx="12" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="97" y="22" fill="#00cec9" font-size="11" font-weight="bold" text-anchor="middle">DeepFM</text>
+          <!-- FM side -->
+          <rect x="10" y="35" width="80" height="80" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width=".8"/>
+          <text x="50" y="55" fill="#fdcb6e" font-size="9" text-anchor="middle">FM</text>
+          <text x="50" y="72" fill="#888" font-size="7" text-anchor="middle">自动特征交叉</text>
+          <text x="50" y="85" fill="#888" font-size="7" text-anchor="middle">⟨eᵢ,eⱼ⟩</text>
+          <text x="50" y="100" fill="#00cec9" font-size="7" text-anchor="middle">无需特征工程!</text>
+          <!-- Deep side -->
+          <rect x="105" y="35" width="80" height="80" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width=".8"/>
+          <text x="145" y="55" fill="#6c5ce7" font-size="9" text-anchor="middle">Deep</text>
+          <text x="145" y="72" fill="#888" font-size="7" text-anchor="middle">共享 Embedding</text>
+          <text x="145" y="85" fill="#888" font-size="7" text-anchor="middle">→ DNN</text>
+          <!-- Shared embedding highlight -->
+          <rect x="10" y="120" width="175" height="25" rx="6" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width="1.2"/>
+          <text x="97" y="137" fill="#00cec9" font-size="8" text-anchor="middle" font-weight="bold">同一组 Embedding! 梯度共享</text>
+          <!-- Advantages -->
+          <text x="15" y="170" fill="#00cec9" font-size="8">✓ FM 自动学习交叉特征</text>
+          <text x="15" y="188" fill="#00cec9" font-size="8">✓ FM/DNN 共享 Embedding</text>
+          <text x="15" y="206" fill="#00cec9" font-size="8">✓ 端到端训练，无需特征工程</text>
+          <text x="15" y="224" fill="#00cec9" font-size="8">✓ 低阶/高阶交互互相增强</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">DeepFM 相比 Wide&Deep 的三大改进</h3>
+      <p><strong style="color:var(--cyan)">改进一：消除特征工程</strong></p>
+      <p>Wide&Deep 的 Wide 侧需要人工设计交叉特征 φ(x)（如 gender×ad_category），这依赖领域知识且不可扩展。DeepFM 用 FM 组件自动学习所有二阶交互，无需任何手工特征工程。</p>
+      <p><strong style="color:var(--cyan)">改进二：共享 Embedding</strong></p>
+      <p>Wide&Deep 的 Wide 侧和 Deep 侧使用不同的输入表示。DeepFM 让 FM 和 DNN 共享同一组 Embedding 向量，两侧的梯度共同优化，信息互相流通。</p>
+      <p><strong style="color:var(--cyan)">改进三：端到端统一训练</strong></p>
+      <p>Wide&Deep 原论文中 Wide 侧用 FTRL 优化、Deep 侧用 AdaGrad，训练流程不统一。DeepFM 完全端到端，一个优化器搞定。</p>
+      <div class="key key-purple">本质区别：Wide&Deep 的 Wide 侧是<strong>记忆</strong>（死记硬背高频共现模式），DeepFM 的 FM 侧是<strong>建模</strong>（通过隐向量泛化到未见过的特征组合）。后者更强大。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 6. DeepFM Limitation ════════ -->
+<div class="section" id="deepfm-limit">
+  <div class="section-header">
+    <div class="section-num sn-purple">6</div>
+    <div class="section-title">DeepFM 的局限</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 280" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">DNN 的高阶交互是隐式「黑盒」</text>
+        <!-- DNN black box -->
+        <g transform="translate(50,50)">
+          <rect x="0" y="0" width="340" height="140" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="170" y="22" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">DNN 内部</text>
+          <!-- Neurons with messy connections -->
+          <circle cx="40" cy="50" r="8" fill="#6c5ce7" opacity=".3"/><circle cx="40" cy="80" r="8" fill="#6c5ce7" opacity=".3"/><circle cx="40" cy="110" r="8" fill="#6c5ce7" opacity=".3"/>
+          <circle cx="120" cy="45" r="8" fill="#6c5ce7" opacity=".4"/><circle cx="120" cy="75" r="8" fill="#6c5ce7" opacity=".4"/><circle cx="120" cy="105" r="8" fill="#6c5ce7" opacity=".4"/><circle cx="120" cy="125" r="8" fill="#6c5ce7" opacity=".3"/>
+          <circle cx="200" cy="55" r="8" fill="#6c5ce7" opacity=".5"/><circle cx="200" cy="85" r="8" fill="#6c5ce7" opacity=".5"/><circle cx="200" cy="115" r="8" fill="#6c5ce7" opacity=".4"/>
+          <circle cx="280" cy="65" r="8" fill="#6c5ce7" opacity=".6"/><circle cx="280" cy="95" r="8" fill="#6c5ce7" opacity=".6"/>
+          <!-- Connections (messy) -->
+          <line x1="48" y1="50" x2="112" y2="45" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="48" y1="50" x2="112" y2="75" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="48" y1="80" x2="112" y2="75" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="48" y1="80" x2="112" y2="105" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="48" y1="110" x2="112" y2="105" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="128" y1="45" x2="192" y2="55" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="128" y1="75" x2="192" y2="85" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="128" y1="105" x2="192" y2="85" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="208" y1="55" x2="272" y2="65" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <line x1="208" y1="85" x2="272" y2="95" stroke="#6c5ce7" stroke-width=".5" opacity=".2"/>
+          <!-- Question marks -->
+          <text x="80" y="85" fill="#e17055" font-size="16" text-anchor="middle" opacity=".6">?</text>
+          <text x="160" y="72" fill="#e17055" font-size="16" text-anchor="middle" opacity=".6">?</text>
+          <text x="240" y="95" fill="#e17055" font-size="16" text-anchor="middle" opacity=".6">?</text>
+        </g>
+        <!-- Problems -->
+        <g transform="translate(30,210)">
+          <rect x="0" y="0" width="380" height="55" rx="10" fill="rgba(225,112,85,.05)" stroke="#e17055" stroke-width="1"/>
+          <text x="15" y="18" fill="#e17055" font-size="9" font-weight="bold">DNN 高阶交互的问题:</text>
+          <text x="15" y="35" fill="#888" font-size="9">1. 隐式学习 — 不知道具体学到了哪些交互模式</text>
+          <text x="15" y="50" fill="#888" font-size="9">2. bit-wise 混合 — 破坏了 field 的语义结构</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">DNN 的高阶交互是不可控的</h3>
+      <p>DeepFM 虽然通过 DNN 获得了高阶交互能力，但存在两个根本性问题：</p>
+      <p><strong style="color:#e17055">问题一：隐式黑盒</strong></p>
+      <p>DNN 到底学到了哪些高阶交互？是三阶还是五阶？涉及哪些特征？完全不可知。我们无法控制交互的阶数，也无法解释 DNN 学到的交互模式。</p>
+      <p><strong style="color:#e17055">问题二：bit-wise 交互</strong></p>
+      <p>DNN 将所有 field 的 Embedding 拼接后送入全连接层，各维度会被打散混合。这种 <strong>bit-wise</strong> 交互破坏了每个 field embedding 的向量结构——「用户年龄」的第 3 维和「广告类目」的第 7 维直接相乘，失去了 field 级别的语义。</p>
+      <div class="key key-pink"><strong>这就是 xDeepFM 的动机:</strong> 能否设计一种机制，在保留 field 向量结构的前提下，<strong>显式地</strong>建模任意阶交互，且交互阶数可控？</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 7. xDeepFM ════════ -->
+<div class="section" id="xdeepfm">
+  <div class="section-header">
+    <div class="section-num sn-cyan">7</div>
+    <div class="section-title">xDeepFM — CIN + DNN (2018)</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">xDeepFM 架构</text>
+        <!-- Shared Embedding -->
+        <g transform="translate(20,315)">
+          <rect x="0" y="0" width="400" height="40" rx="10" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="2"/>
+          <text x="200" y="18" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">Shared Embedding Layer</text>
+          <text x="200" y="34" fill="#888" font-size="8" text-anchor="middle">e₁, e₂, ..., eₘ (m 个 field，每个 k 维)</text>
+        </g>
+        <!-- Three components -->
+        <!-- Linear -->
+        <g transform="translate(20,190)">
+          <rect x="0" y="0" width="110" height="100" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="55" y="20" fill="#fdcb6e" font-size="9" font-weight="bold" text-anchor="middle">Linear</text>
+          <text x="55" y="40" fill="#888" font-size="8" text-anchor="middle">一阶</text>
+          <text x="55" y="58" fill="#888" font-size="8" text-anchor="middle">Σwᵢxᵢ</text>
+          <text x="55" y="85" fill="#fdcb6e" font-size="8" text-anchor="middle">显式一阶</text>
+        </g>
+        <!-- CIN -->
+        <g transform="translate(145,145)">
+          <rect x="0" y="0" width="145" height="145" rx="10" fill="rgba(0,206,201,.05)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="72" y="20" fill="#00cec9" font-size="10" font-weight="bold" text-anchor="middle">CIN</text>
+          <text x="72" y="38" fill="#888" font-size="8" text-anchor="middle">Compressed</text>
+          <text x="72" y="50" fill="#888" font-size="8" text-anchor="middle">Interaction Network</text>
+          <!-- CIN layers -->
+          <rect x="12" y="60" width="121" height="14" rx="3" fill="#00cec9" opacity=".15"/>
+          <text x="72" y="71" fill="#888" font-size="7" text-anchor="middle">CIN Layer 1 (二阶)</text>
+          <rect x="18" y="80" width="109" height="14" rx="3" fill="#00cec9" opacity=".2"/>
+          <text x="72" y="91" fill="#888" font-size="7" text-anchor="middle">CIN Layer 2 (三阶)</text>
+          <rect x="24" y="100" width="97" height="14" rx="3" fill="#00cec9" opacity=".25"/>
+          <text x="72" y="111" fill="#888" font-size="7" text-anchor="middle">CIN Layer T (T+1 阶)</text>
+          <text x="72" y="135" fill="#00cec9" font-size="8" text-anchor="middle">显式 vector-wise</text>
+        </g>
+        <!-- DNN -->
+        <g transform="translate(305,190)">
+          <rect x="0" y="0" width="115" height="100" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="57" y="20" fill="#6c5ce7" font-size="9" font-weight="bold" text-anchor="middle">DNN</text>
+          <rect x="12" y="32" width="91" height="12" rx="3" fill="#6c5ce7" opacity=".12"/>
+          <rect x="18" y="50" width="79" height="12" rx="3" fill="#6c5ce7" opacity=".18"/>
+          <rect x="24" y="68" width="67" height="12" rx="3" fill="#6c5ce7" opacity=".24"/>
+          <text x="57" y="96" fill="#6c5ce7" font-size="8" text-anchor="middle">隐式 bit-wise</text>
+        </g>
+        <!-- Arrows from embedding -->
+        <line x1="75" y1="315" x2="75" y2="290" stroke="#fdcb6e" stroke-width="1" opacity=".4"/>
+        <line x1="217" y1="315" x2="217" y2="290" stroke="#00cec9" stroke-width="1" opacity=".4"/>
+        <line x1="362" y1="315" x2="362" y2="290" stroke="#6c5ce7" stroke-width="1" opacity=".4"/>
+        <!-- Output -->
+        <g transform="translate(80,55)">
+          <rect x="0" y="0" width="280" height="50" rx="10" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1.5"/>
+          <text x="140" y="18" fill="#fd79a8" font-size="11" font-weight="bold" text-anchor="middle">Output Layer</text>
+          <text x="140" y="38" fill="#888" font-size="9" text-anchor="middle">ŷ = σ(y_Linear + y_CIN + y_DNN)</text>
+        </g>
+        <!-- Arrows to output -->
+        <line x1="75" y1="190" x2="155" y2="105" stroke="#fdcb6e" stroke-width="1" opacity=".3"/>
+        <line x1="217" y1="145" x2="220" y2="105" stroke="#00cec9" stroke-width="1" opacity=".3"/>
+        <line x1="362" y1="190" x2="295" y2="105" stroke="#6c5ce7" stroke-width="1" opacity=".3"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">xDeepFM: 显式 + 隐式的终极组合</h3>
+      <p><strong>x = eXtreme</strong>，xDeepFM 的目标是同时实现<strong>显式</strong>和<strong>隐式</strong>的任意阶特征交互。</p>
+      <div class="formula formula-cyan">ŷ = σ(y_Linear + y_CIN + y_DNN)</div>
+      <p>由三个组件构成：</p>
+      <p><strong style="color:var(--gold)">Linear</strong> — 一阶线性项 Σwᵢxᵢ</p>
+      <p><strong style="color:var(--cyan)">CIN (核心创新)</strong> — Compressed Interaction Network，在 <strong>vector 级别</strong>显式建模有界阶交互。每多一层 CIN，交互阶数 +1，阶数完全可控。</p>
+      <p><strong style="color:var(--purple)">DNN</strong> — 与 DeepFM 相同，隐式学习高阶 bit-wise 交互作为补充。</p>
+      <div class="key key-cyan"><strong>xDeepFM = CIN + DNN + Linear</strong>，其中 CIN 是全新组件，用 vector-wise 的显式交互替代了 DeepFM 中 FM 的角色，且可以建模任意阶交互（不限于二阶）。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 8. CIN ════════ -->
+<div class="section" id="cin">
+  <div class="section-header">
+    <div class="section-num sn-cyan">8</div>
+    <div class="section-title">CIN 详解 — 压缩交互网络</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 380" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">CIN: 逐层外积构建高阶交互</text>
+        <!-- X0: original field embeddings -->
+        <g transform="translate(20,45)">
+          <text x="0" y="0" fill="#00cec9" font-size="10" font-weight="bold">X⁰ (原始 field embeddings)</text>
+          <rect x="0" y="8" width="50" height="20" rx="4" fill="#00cec9" opacity=".2" stroke="#00cec9" stroke-width="1"/>
+          <text x="25" y="22" fill="#00cec9" font-size="7" text-anchor="middle">e₁ (k维)</text>
+          <rect x="58" y="8" width="50" height="20" rx="4" fill="#00cec9" opacity=".2" stroke="#00cec9" stroke-width="1"/>
+          <text x="83" y="22" fill="#00cec9" font-size="7" text-anchor="middle">e₂ (k维)</text>
+          <rect x="116" y="8" width="50" height="20" rx="4" fill="#00cec9" opacity=".2" stroke="#00cec9" stroke-width="1"/>
+          <text x="141" y="22" fill="#00cec9" font-size="7" text-anchor="middle">e₃ (k维)</text>
+          <text x="180" y="22" fill="#888" font-size="9">...</text>
+          <text x="220" y="22" fill="#888" font-size="8">m 个 field, 每个 k 维向量</text>
+        </g>
+        <!-- Outer product step -->
+        <g transform="translate(20,90)">
+          <rect x="0" y="0" width="400" height="70" rx="10" fill="rgba(253,203,110,.04)" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="200" y="18" fill="#fdcb6e" font-size="10" font-weight="bold" text-anchor="middle">Step 1: X⁰ 与 X⁰ 做 vector-wise 外积</text>
+          <text x="200" y="38" fill="#888" font-size="9" text-anchor="middle">Zₕₖ = X⁰ₕ ∘ X⁰ₖ (逐元素乘, 保留 embedding 维度)</text>
+          <text x="200" y="55" fill="#888" font-size="8" text-anchor="middle">生成 m×m 个中间向量 → 用参数矩阵 W 压缩为 H₁ 个向量</text>
+        </g>
+        <!-- X1 -->
+        <g transform="translate(20,175)">
+          <text x="0" y="0" fill="#fdcb6e" font-size="10" font-weight="bold">X¹ (H₁ 个向量, 每个 k 维) — 二阶交互</text>
+          <rect x="0" y="8" width="40" height="18" rx="4" fill="#fdcb6e" opacity=".2" stroke="#fdcb6e" stroke-width="1"/>
+          <rect x="48" y="8" width="40" height="18" rx="4" fill="#fdcb6e" opacity=".2" stroke="#fdcb6e" stroke-width="1"/>
+          <rect x="96" y="8" width="40" height="18" rx="4" fill="#fdcb6e" opacity=".2" stroke="#fdcb6e" stroke-width="1"/>
+          <rect x="144" y="8" width="40" height="18" rx="4" fill="#fdcb6e" opacity=".2" stroke="#fdcb6e" stroke-width="1"/>
+          <text x="200" y="22" fill="#888" font-size="8">... (H₁ 个)</text>
+        </g>
+        <!-- Step 2 -->
+        <g transform="translate(20,210)">
+          <rect x="0" y="0" width="400" height="50" rx="10" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="200" y="18" fill="#6c5ce7" font-size="10" font-weight="bold" text-anchor="middle">Step 2: X¹ 与 X⁰ 做外积 → 压缩</text>
+          <text x="200" y="38" fill="#888" font-size="8" text-anchor="middle">X¹ 已包含二阶交互，再与 X⁰ 交互 → 三阶!</text>
+        </g>
+        <!-- X2 -->
+        <g transform="translate(20,275)">
+          <text x="0" y="0" fill="#6c5ce7" font-size="10" font-weight="bold">X² (H₂ 个向量) — 三阶交互</text>
+          <rect x="0" y="8" width="35" height="18" rx="4" fill="#6c5ce7" opacity=".2" stroke="#6c5ce7" stroke-width="1"/>
+          <rect x="43" y="8" width="35" height="18" rx="4" fill="#6c5ce7" opacity=".2" stroke="#6c5ce7" stroke-width="1"/>
+          <rect x="86" y="8" width="35" height="18" rx="4" fill="#6c5ce7" opacity=".2" stroke="#6c5ce7" stroke-width="1"/>
+          <text x="140" y="22" fill="#888" font-size="8">... (H₂ 个)</text>
+        </g>
+        <!-- Key insight -->
+        <g transform="translate(20,310)">
+          <rect x="0" y="0" width="400" height="55" rx="10" fill="rgba(253,121,168,.05)" stroke="#fd79a8" stroke-width="1"/>
+          <text x="200" y="18" fill="#fd79a8" font-size="10" font-weight="bold" text-anchor="middle">每层 CIN 交互阶数 +1</text>
+          <text x="200" y="38" fill="#888" font-size="9" text-anchor="middle">Xᵏ 总是与 X⁰ 做外积 → 保证第 k 层编码恰好 (k+1) 阶交互</text>
+          <text x="200" y="53" fill="#00cec9" font-size="8" text-anchor="middle">阶数 = CIN 层数 + 1，完全可控!</text>
+        </g>
+        <!-- Arrows -->
+        <line x1="100" y1="75" x2="100" y2="90" stroke="#888" stroke-width="1" opacity=".3"/>
+        <line x1="100" y1="160" x2="100" y2="175" stroke="#888" stroke-width="1" opacity=".3"/>
+        <line x1="100" y1="195" x2="100" y2="210" stroke="#888" stroke-width="1" opacity=".3"/>
+        <line x1="100" y1="260" x2="100" y2="275" stroke="#888" stroke-width="1" opacity=".3"/>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">CIN 的工作原理</h3>
+      <p>CIN 的核心操作是<strong>逐层外积 + 压缩</strong>：</p>
+      <p><strong>Step 1:</strong> 将当前层 Xᵏ 的每个向量与 X⁰ 的每个向量做<strong>逐元素相乘</strong>（Hadamard 积，不是 DNN 里的拼接），生成中间张量。</p>
+      <p><strong>Step 2:</strong> 用可学习的参数矩阵 W 将中间张量<strong>压缩</strong>为 Hₖ₊₁ 个新向量，作为下一层 Xᵏ⁺¹。</p>
+      <div class="formula formula-cyan">Xᵏ⁺¹ₕ = Σᵢ Σⱼ Wᵏₕᵢⱼ (Xᵏᵢ ∘ X⁰ⱼ)</div>
+      <p><strong>关键设计:</strong> 每一层都与 <strong>X⁰</strong>（原始 field embeddings）做外积，而不是与前一层。这保证了：</p>
+      <p>- 第 1 层 = X⁰ × X⁰ → <strong>二阶</strong>交互</p>
+      <p>- 第 2 层 = X¹ × X⁰ → <strong>三阶</strong>交互</p>
+      <p>- 第 T 层 = X^(T-1) × X⁰ → <strong>(T+1) 阶</strong>交互</p>
+      <p>最后，每一层的输出做 sum pooling 后拼接，送入输出层。</p>
+      <div class="key key-cyan"><strong>"Compressed" 的含义:</strong> 外积会生成 Hₖ × m 个中间向量，通过 W 矩阵压缩为 Hₖ₊₁ 个，避免指数级膨胀。这就是"压缩交互网络"名字的由来。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 9. Bit vs Vector ════════ -->
+<div class="section" id="bitvec">
+  <div class="section-header">
+    <div class="section-num sn-cyan">9</div>
+    <div class="section-title">Bit-wise vs Vector-wise 交互</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">xDeepFM 提出的核心概念区分</text>
+        <!-- Bit-wise -->
+        <g transform="translate(15,45)">
+          <rect x="0" y="0" width="200" height="240" rx="12" fill="rgba(108,92,231,.04)" stroke="#6c5ce7" stroke-width="1.5"/>
+          <text x="100" y="22" fill="#6c5ce7" font-size="11" font-weight="bold" text-anchor="middle">Bit-wise (DNN)</text>
+          <!-- Field embeddings flattened -->
+          <text x="15" y="45" fill="#888" font-size="8">field embeddings → 拼接 → 打散</text>
+          <g transform="translate(15,55)">
+            <rect x="0" y="0" width="18" height="14" rx="2" fill="#fd79a8" opacity=".4"/>
+            <rect x="20" y="0" width="18" height="14" rx="2" fill="#fd79a8" opacity=".4"/>
+            <rect x="40" y="0" width="18" height="14" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="60" y="0" width="18" height="14" rx="2" fill="#6c5ce7" opacity=".4"/>
+            <rect x="80" y="0" width="18" height="14" rx="2" fill="#00cec9" opacity=".4"/>
+            <rect x="100" y="0" width="18" height="14" rx="2" fill="#00cec9" opacity=".4"/>
+            <rect x="120" y="0" width="18" height="14" rx="2" fill="#fdcb6e" opacity=".4"/>
+            <rect x="140" y="0" width="18" height="14" rx="2" fill="#fdcb6e" opacity=".4"/>
+          </g>
+          <!-- Cross-field bit mixing -->
+          <g transform="translate(15,80)">
+            <line x1="9" y1="0" x2="69" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+            <line x1="29" y1="0" x2="109" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+            <line x1="49" y1="0" x2="29" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+            <line x1="89" y1="0" x2="49" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+            <line x1="109" y1="0" x2="149" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+            <line x1="129" y1="0" x2="89" y2="20" stroke="#e17055" stroke-width="1" opacity=".5"/>
+          </g>
+          <text x="100" y="132" fill="#888" font-size="8" text-anchor="middle">各维度被打散混合</text>
+          <text x="100" y="148" fill="#e17055" font-size="8" text-anchor="middle">field 结构丢失!</text>
+          <!-- Example -->
+          <rect x="10" y="160" width="180" height="65" rx="6" fill="rgba(225,112,85,.04)" stroke="#e17055" stroke-width=".8"/>
+          <text x="100" y="178" fill="#e17055" font-size="8" text-anchor="middle">例: 「年龄」的第3维</text>
+          <text x="100" y="193" fill="#e17055" font-size="8" text-anchor="middle">× 「广告类目」的第7维</text>
+          <text x="100" y="210" fill="#888" font-size="7" text-anchor="middle">这种跨 field 的 bit 级混合</text>
+          <text x="100" y="222" fill="#888" font-size="7" text-anchor="middle">缺乏明确的语义含义</text>
+        </g>
+        <!-- Vector-wise -->
+        <g transform="translate(225,45)">
+          <rect x="0" y="0" width="200" height="240" rx="12" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width="1.5"/>
+          <text x="100" y="22" fill="#00cec9" font-size="11" font-weight="bold" text-anchor="middle">Vector-wise (CIN)</text>
+          <!-- Field embeddings as whole vectors -->
+          <text x="15" y="45" fill="#888" font-size="8">field embeddings → 整体交互</text>
+          <g transform="translate(15,55)">
+            <rect x="0" y="0" width="38" height="14" rx="4" fill="#fd79a8" opacity=".4" stroke="#fd79a8" stroke-width="1"/>
+            <text x="19" y="10" fill="#fff" font-size="6" text-anchor="middle">e₁</text>
+            <rect x="45" y="0" width="38" height="14" rx="4" fill="#6c5ce7" opacity=".4" stroke="#6c5ce7" stroke-width="1"/>
+            <text x="64" y="10" fill="#fff" font-size="6" text-anchor="middle">e₂</text>
+            <rect x="90" y="0" width="38" height="14" rx="4" fill="#00cec9" opacity=".4" stroke="#00cec9" stroke-width="1"/>
+            <text x="109" y="10" fill="#fff" font-size="6" text-anchor="middle">e₃</text>
+            <rect x="135" y="0" width="38" height="14" rx="4" fill="#fdcb6e" opacity=".4" stroke="#fdcb6e" stroke-width="1"/>
+            <text x="154" y="10" fill="#fff" font-size="6" text-anchor="middle">e₄</text>
+          </g>
+          <!-- Vector-level interaction -->
+          <g transform="translate(15,80)">
+            <line x1="19" y1="0" x2="42" y2="25" stroke="#00cec9" stroke-width="1.5" opacity=".6"/>
+            <line x1="64" y1="0" x2="42" y2="25" stroke="#00cec9" stroke-width="1.5" opacity=".6"/>
+            <rect x="25" y="25" width="38" height="14" rx="4" fill="#00cec9" opacity=".25" stroke="#00cec9" stroke-width="1"/>
+            <text x="44" y="35" fill="#00cec9" font-size="6" text-anchor="middle">e₁∘e₂</text>
+            <line x1="109" y1="0" x2="120" y2="25" stroke="#00cec9" stroke-width="1.5" opacity=".6"/>
+            <line x1="154" y1="0" x2="120" y2="25" stroke="#00cec9" stroke-width="1.5" opacity=".6"/>
+            <rect x="103" y="25" width="38" height="14" rx="4" fill="#00cec9" opacity=".25" stroke="#00cec9" stroke-width="1"/>
+            <text x="122" y="35" fill="#00cec9" font-size="6" text-anchor="middle">e₃∘e₄</text>
+          </g>
+          <text x="100" y="132" fill="#888" font-size="8" text-anchor="middle">向量整体做 Hadamard 积</text>
+          <text x="100" y="148" fill="#00cec9" font-size="8" text-anchor="middle">field 结构保留!</text>
+          <!-- Example -->
+          <rect x="10" y="160" width="180" height="65" rx="6" fill="rgba(0,206,201,.04)" stroke="#00cec9" stroke-width=".8"/>
+          <text x="100" y="178" fill="#00cec9" font-size="8" text-anchor="middle">例: 「年龄」的整个向量</text>
+          <text x="100" y="193" fill="#00cec9" font-size="8" text-anchor="middle">∘ 「广告类目」的整个向量</text>
+          <text x="100" y="210" fill="#888" font-size="7" text-anchor="middle">「年龄 × 广告类目」的</text>
+          <text x="100" y="222" fill="#888" font-size="7" text-anchor="middle">语义交互，含义明确</text>
+        </g>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">xDeepFM 提出的关键概念区分</h3>
+      <p>这是 xDeepFM 论文最重要的理论贡献之一：明确区分了两种特征交互方式。</p>
+      <p><strong style="color:var(--purple)">Bit-wise 交互 (DNN/FM)</strong></p>
+      <p>将所有 field embedding 拼接成一个长向量后送入全连接层，不同 field 的不同维度会被打散混合。例如「年龄 embedding 的第 3 维」×「广告 embedding 的第 7 维」—— 这种交互缺乏明确的语义含义。</p>
+      <p><strong style="color:var(--cyan)">Vector-wise 交互 (CIN)</strong></p>
+      <p>将每个 field 的 embedding 作为一个整体向量，做 Hadamard 积（逐元素乘）。例如「年龄向量」∘「广告向量」—— 交互的语义单位是 field 级别，含义明确且可解释。</p>
+      <div class="key key-cyan">
+        <strong>为什么 vector-wise 更好?</strong><br>
+        1. 保留了 field 的语义结构 → 更可解释<br>
+        2. 交互的粒度更合理 → 噪声更少<br>
+        3. CIN 每层的交互阶数明确 → 可控性强<br>
+        xDeepFM 同时使用两者: CIN 做 vector-wise 显式交互，DNN 做 bit-wise 隐式交互，互为补充。
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 10. Compare ════════ -->
+<div class="section" id="compare">
+  <div class="section-header">
+    <div class="section-num sn-pink">10</div>
+    <div class="section-title">全面对比</div>
+  </div>
+  <div class="wide-card">
+    <h3 style="color:var(--pink)">FM vs DeepFM vs xDeepFM 对比表</h3>
+    <table class="cmp-table">
+      <tr>
+        <th>维度</th>
+        <th style="color:var(--gold)">FM (2010)</th>
+        <th style="color:var(--purple)">DeepFM (2017)</th>
+        <th style="color:var(--cyan)">xDeepFM (2018)</th>
+      </tr>
+      <tr>
+        <td>交互阶数</td>
+        <td>仅二阶</td>
+        <td>二阶 (FM) + 任意阶 (DNN)</td>
+        <td>任意阶 (CIN) + 任意阶 (DNN)</td>
+      </tr>
+      <tr>
+        <td>高阶交互方式</td>
+        <td style="color:#e17055">无</td>
+        <td>DNN 隐式</td>
+        <td>CIN 显式 + DNN 隐式</td>
+      </tr>
+      <tr>
+        <td>交互粒度</td>
+        <td>bit-wise</td>
+        <td>bit-wise</td>
+        <td style="color:var(--cyan)">vector-wise (CIN) + bit-wise (DNN)</td>
+      </tr>
+      <tr>
+        <td>交互可控性</td>
+        <td>固定二阶</td>
+        <td style="color:#e17055">不可控 (DNN 黑盒)</td>
+        <td style="color:var(--cyan)">CIN 层数 = 交互阶数 - 1</td>
+      </tr>
+      <tr>
+        <td>可解释性</td>
+        <td>较好 (内积)</td>
+        <td>FM 部分可解释，DNN 不可解释</td>
+        <td style="color:var(--cyan)">CIN 较可解释，DNN 不可解释</td>
+      </tr>
+      <tr>
+        <td>特征工程</td>
+        <td>不需要</td>
+        <td>不需要</td>
+        <td>不需要</td>
+      </tr>
+      <tr>
+        <td>Embedding 共享</td>
+        <td>—</td>
+        <td style="color:var(--cyan)">FM 和 DNN 共享</td>
+        <td style="color:var(--cyan)">CIN 和 DNN 共享</td>
+      </tr>
+      <tr>
+        <td>模型复杂度</td>
+        <td>O(kn) 最低</td>
+        <td>中等 (+ DNN 参数)</td>
+        <td>最高 (+ CIN + DNN 参数)</td>
+      </tr>
+      <tr>
+        <td>训练速度</td>
+        <td style="color:var(--cyan)">最快</td>
+        <td>中等</td>
+        <td style="color:#e17055">最慢 (CIN 外积计算量大)</td>
+      </tr>
+      <tr>
+        <td>论文引用</td>
+        <td>~3,400</td>
+        <td>~2,700</td>
+        <td>~1,000</td>
+      </tr>
+      <tr>
+        <td>发表会议</td>
+        <td>ICDM 2010</td>
+        <td>IJCAI 2017</td>
+        <td>KDD 2018</td>
+      </tr>
+    </table>
+
+    <div style="margin-top:1.5rem; display:grid; grid-template-columns:1fr 1fr 1fr; gap:1rem;">
+      <div style="padding:.8rem 1rem; background:rgba(253,203,110,.04); border-left:3px solid var(--gold); border-radius:0 8px 8px 0;">
+        <p style="font-size:.82rem; color:var(--gold); font-weight:700; margin:0 0 .3rem;">FM 的角色</p>
+        <p style="font-size:.8rem; color:var(--text2); margin:0;">理论基石。证明了稀疏特征可以通过隐向量内积高效交互。所有后续工作的起点。</p>
+      </div>
+      <div style="padding:.8rem 1rem; background:rgba(108,92,231,.04); border-left:3px solid var(--purple); border-radius:0 8px 8px 0;">
+        <p style="font-size:.82rem; color:var(--purple); font-weight:700; margin:0 0 .3rem;">DeepFM 的角色</p>
+        <p style="font-size:.8rem; color:var(--text2); margin:0;">工业标配。共享 Embedding + 端到端训练使其成为效果和效率的最佳平衡点。</p>
+      </div>
+      <div style="padding:.8rem 1rem; background:rgba(0,206,201,.04); border-left:3px solid var(--cyan); border-radius:0 8px 8px 0;">
+        <p style="font-size:.82rem; color:var(--cyan); font-weight:700; margin:0 0 .3rem;">xDeepFM 的角色</p>
+        <p style="font-size:.8rem; color:var(--text2); margin:0;">理论深化。提出 bit-wise vs vector-wise 的概念框架，影响了后续所有交互建模研究。</p>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ 11. Choose ════════ -->
+<div class="section" id="choose">
+  <div class="section-header">
+    <div class="section-num sn-green">11</div>
+    <div class="section-title">如何选择?</div>
+  </div>
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 300" xmlns="http://www.w3.org/2000/svg">
+        <text x="220" y="22" fill="#fff" font-size="13" font-weight="bold" text-anchor="middle">决策流程图</text>
+        <!-- Start -->
+        <rect x="150" y="40" width="140" height="35" rx="8" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1.5"/>
+        <text x="220" y="62" fill="#fd79a8" font-size="10" text-anchor="middle">你的场景是?</text>
+        <!-- Branch 1 -->
+        <line x1="170" y1="75" x2="80" y2="110" stroke="#fdcb6e" stroke-width="1.2"/>
+        <rect x="10" y="105" width="140" height="50" rx="8" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.2"/>
+        <text x="80" y="122" fill="#fdcb6e" font-size="9" text-anchor="middle" font-weight="bold">算力有限 / 低延迟</text>
+        <text x="80" y="140" fill="#888" font-size="8" text-anchor="middle">特征交互以二阶为主</text>
+        <line x1="80" y1="155" x2="80" y2="180" stroke="#fdcb6e" stroke-width="1"/>
+        <rect x="25" y="180" width="110" height="30" rx="15" fill="rgba(253,203,110,.12)" stroke="#fdcb6e" stroke-width="2"/>
+        <text x="80" y="200" fill="#fdcb6e" font-size="11" text-anchor="middle" font-weight="bold">→ FM</text>
+
+        <!-- Branch 2 -->
+        <line x1="220" y1="75" x2="220" y2="110" stroke="#6c5ce7" stroke-width="1.2"/>
+        <rect x="150" y="105" width="140" height="50" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1.2"/>
+        <text x="220" y="122" fill="#6c5ce7" font-size="9" text-anchor="middle" font-weight="bold">工业推荐 / 平衡场景</text>
+        <text x="220" y="140" fill="#888" font-size="8" text-anchor="middle">需要高阶交互 + 效率</text>
+        <line x1="220" y1="155" x2="220" y2="180" stroke="#6c5ce7" stroke-width="1"/>
+        <rect x="165" y="180" width="110" height="30" rx="15" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="2"/>
+        <text x="220" y="200" fill="#6c5ce7" font-size="11" text-anchor="middle" font-weight="bold">→ DeepFM</text>
+
+        <!-- Branch 3 -->
+        <line x1="270" y1="75" x2="360" y2="110" stroke="#00cec9" stroke-width="1.2"/>
+        <rect x="290" y="105" width="140" height="50" rx="8" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1.2"/>
+        <text x="360" y="122" fill="#00cec9" font-size="9" text-anchor="middle" font-weight="bold">需要可解释性</text>
+        <text x="360" y="140" fill="#888" font-size="8" text-anchor="middle">或可控的高阶交互</text>
+        <line x1="360" y1="155" x2="360" y2="180" stroke="#00cec9" stroke-width="1"/>
+        <rect x="305" y="180" width="110" height="30" rx="15" fill="rgba(0,206,201,.12)" stroke="#00cec9" stroke-width="2"/>
+        <text x="360" y="200" fill="#00cec9" font-size="11" text-anchor="middle" font-weight="bold">→ xDeepFM</text>
+
+        <!-- Bottom note -->
+        <rect x="30" y="235" width="380" height="50" rx="10" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="255" fill="#55efc4" font-size="9" text-anchor="middle" font-weight="bold">实际中 DeepFM 是最常用的起点</text>
+        <text x="220" y="273" fill="#888" font-size="8" text-anchor="middle">在 DeepFM baseline 基础上尝试 xDeepFM / DCN-V2 / AutoInt 等改进</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan" style="color:var(--green)">实践建议</h3>
+      <p><strong style="color:var(--gold)">选 FM:</strong> 算力受限、需要低延迟的场景（如端侧推理）。特征交互以二阶为主的简单任务。FM 参数少、训练快、可解释。</p>
+      <p><strong style="color:var(--purple)">选 DeepFM:</strong> 工业推荐的标准选择。效果和效率的最佳平衡点。共享 Embedding + 端到端训练，工程实现简洁。绝大多数场景的首选 baseline。</p>
+      <p><strong style="color:var(--cyan)">选 xDeepFM:</strong> 需要可解释的高阶交互分析，或需要精确控制交互阶数的研究场景。注意 CIN 的计算开销较大。</p>
+      <p><strong>补充说明:</strong> 在 2018 年之后，还有更多后续模型值得关注：</p>
+      <div class="tags">
+        <span>DCN-V2 (2020) — 改进的交叉网络</span>
+        <span>AutoInt (2019) — 自注意力交互</span>
+        <span>FiBiNET (2019) — 双线性交互</span>
+        <span>DLRM (2019) — Meta 的工业方案</span>
+      </div>
+      <div class="key key-pink"><strong>演进主线总结:</strong><br>
+        FM (二阶显式) → DeepFM (二阶显式 + 任意阶隐式) → xDeepFM (任意阶显式 + 任意阶隐式)<br>
+        每一步都在解决前一步的核心局限，同时保留前一步的优势。</div>
+    </div>
+  </div>
+</div>
+
+<!-- ════════ Footer ════════ -->
+<footer>
+  FM → DeepFM → xDeepFM Deep Dive · CTR Models Evolution<br>
+  <a href="../sparse-models.html">← 返回 Sparse Models 全景图</a> ·
+  <a href="lasso.html">LASSO 深度解读</a> ·
+  LLM4Rec Research · 2026
+</footer>
+
+<script>
+const obs = new IntersectionObserver(entries => {
+  entries.forEach(e => { if(e.isIntersecting) e.target.classList.add('visible'); });
+}, { threshold:.08, rootMargin:'0px 0px -40px 0px' });
+document.querySelectorAll('.row, .wide-card').forEach(el => obs.observe(el));
+</script>
+</body>
+</html>
