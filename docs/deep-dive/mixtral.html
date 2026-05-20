@@ -1,0 +1,1308 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Mixtral of Experts 深度解读 — 稀疏专家混合模型</title>
+<style>
+  :root {
+    --bg: #08080d;
+    --card: #101018;
+    --border: #1a1a2a;
+    --gold: #fdcb6e;
+    --gold2: #e17055;
+    --purple: #6c5ce7;
+    --cyan: #00cec9;
+    --pink: #fd79a8;
+    --blue: #74b9ff;
+    --green: #55efc4;
+    --orange: #e17055;
+    --text: #dddde4;
+    --text2: #7e7e98;
+    --text3: #55556a;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  html { scroll-behavior:smooth; }
+  body {
+    font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei', sans-serif;
+    background: var(--bg); color: var(--text); line-height:1.8; overflow-x:hidden;
+  }
+
+  /* ── Hero ── */
+  .hero {
+    min-height:100vh; display:flex; align-items:center; justify-content:center;
+    position:relative; overflow:hidden;
+  }
+  .hero::before {
+    content:''; position:absolute; inset:0;
+    background:
+      radial-gradient(ellipse 500px 400px at 15% 25%, rgba(253,203,110,.12), transparent),
+      radial-gradient(ellipse 450px 350px at 85% 55%, rgba(0,206,201,.1), transparent),
+      radial-gradient(ellipse 400px 300px at 50% 80%, rgba(108,92,231,.1), transparent),
+      radial-gradient(ellipse 350px 250px at 65% 20%, rgba(253,121,168,.07), transparent);
+    animation: heroDrift 18s ease-in-out infinite alternate;
+  }
+  @keyframes heroDrift { 0%{transform:translate(0,0) scale(1)} 100%{transform:translate(15px,-12px) scale(1.04)} }
+  .hero-inner { position:relative; z-index:1; max-width:960px; text-align:center; padding:2rem; }
+  .hero-badge {
+    display:inline-block; padding:.3rem .9rem; border-radius:999px;
+    background:rgba(253,203,110,.1); border:1px solid rgba(253,203,110,.25);
+    color:var(--gold); font-size:.78rem; letter-spacing:.05em; text-transform:uppercase;
+    margin-bottom:1.2rem;
+  }
+  .hero h1 {
+    font-size:clamp(2rem,5vw,3.2rem); font-weight:800;
+    background:linear-gradient(135deg, #fdcb6e, #6c5ce7, #00cec9, #fd79a8);
+    -webkit-background-clip:text; -webkit-text-fill-color:transparent;
+    line-height:1.25; margin-bottom:.8rem;
+  }
+  .hero .subtitle { font-size:clamp(.9rem,2vw,1.12rem); color:var(--text2); max-width:740px; margin:0 auto; }
+  .hero-meta {
+    display:flex; gap:2rem; justify-content:center; flex-wrap:wrap; margin-top:2rem;
+  }
+  .hero-meta .item { text-align:center; }
+  .hero-meta .val { font-size:1.5rem; font-weight:700; color:var(--gold); }
+  .hero-meta .lbl { font-size:.76rem; color:var(--text2); }
+  .scroll-arrow {
+    position:absolute; bottom:2rem; left:50%; transform:translateX(-50%);
+    animation: bounce 2s infinite; z-index:1;
+  }
+  @keyframes bounce { 0%,100%{transform:translateX(-50%) translateY(0);opacity:.5} 50%{transform:translateX(-50%) translateY(10px);opacity:1} }
+  .scroll-arrow svg { width:26px; height:26px; stroke:var(--text3); fill:none; stroke-width:2; }
+
+  /* ── Nav ── */
+  .nav {
+    position:sticky; top:0; z-index:100;
+    background:rgba(8,8,13,.88); backdrop-filter:blur(16px);
+    border-bottom:1px solid var(--border);
+    display:flex; justify-content:center; gap:.5rem; padding:.65rem 1rem; flex-wrap:wrap;
+  }
+  .nav a {
+    padding:.3rem .7rem; border-radius:999px;
+    border:1px solid var(--border); background:transparent;
+    color:var(--text2); font-size:.72rem; text-decoration:none; transition:.3s;
+    white-space:nowrap;
+  }
+  .nav a:hover { border-color:var(--gold); color:#fff; background:rgba(253,203,110,.08); }
+
+  /* ── Section ── */
+  .section { max-width:1100px; margin:0 auto; padding:4rem 1.5rem 2rem; }
+  .section-header { display:flex; align-items:center; gap:.8rem; margin-bottom:2rem; }
+  .section-num {
+    width:40px; height:40px; border-radius:50%;
+    display:flex; align-items:center; justify-content:center;
+    font-size:1.05rem; font-weight:800; color:#000; flex-shrink:0;
+  }
+  .sn-gold   { background:linear-gradient(135deg, var(--gold), var(--gold2)); }
+  .sn-purple { background:linear-gradient(135deg, var(--purple), #a29bfe); }
+  .sn-cyan   { background:linear-gradient(135deg, var(--cyan), #0984e3); }
+  .sn-pink   { background:linear-gradient(135deg, var(--pink), #e84393); }
+  .sn-blue   { background:linear-gradient(135deg, var(--blue), #0984e3); }
+  .sn-green  { background:linear-gradient(135deg, var(--green), #00b894); }
+  .section-title { font-size:1.45rem; font-weight:700; color:#fff; }
+
+  /* ── Row (left vis, right txt) ── */
+  .row {
+    display:grid; grid-template-columns:1fr 1fr; gap:0;
+    margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .row.visible { opacity:1; transform:translateY(0); }
+  .row .vis {
+    background:var(--card); border:1px solid var(--border);
+    border-radius:16px 0 0 16px; padding:1.8rem;
+    display:flex; align-items:center; justify-content:center; min-height:320px;
+  }
+  .row .txt {
+    background:var(--card); border:1px solid var(--border); border-left:none;
+    border-radius:0 16px 16px 0; padding:1.8rem 2rem;
+    display:flex; flex-direction:column; justify-content:center;
+  }
+  @media(max-width:860px){
+    .row { grid-template-columns:1fr; }
+    .row .vis { border-radius:16px 16px 0 0; min-height:250px; }
+    .row .txt { border-radius:0 0 16px 16px; border-left:1px solid var(--border); border-top:none; }
+  }
+  .row .vis svg { width:100%; max-width:440px; height:auto; }
+  .row .txt h3 { font-size:1.08rem; font-weight:700; margin-bottom:.5rem; }
+  .h-gold { color:var(--gold); }
+  .h-purple { color:var(--purple); }
+  .h-cyan { color:var(--cyan); }
+  .h-pink { color:var(--pink); }
+  .h-blue { color:var(--blue); }
+  .h-green { color:var(--green); }
+  .h-orange { color:var(--orange); }
+  .row .txt p { font-size:.86rem; color:var(--text2); margin-bottom:.65rem; }
+  .row .txt .formula {
+    font-family:'Courier New',monospace; font-size:.85rem;
+    padding:.6rem 1rem; border-radius:8px;
+    background:rgba(253,203,110,.04); border:1px solid rgba(253,203,110,.12);
+    color:var(--gold); margin:.5rem 0; word-break:break-all;
+  }
+  .formula-purple { background:rgba(108,92,231,.04)!important; border-color:rgba(108,92,231,.15)!important; color:var(--purple)!important; }
+  .formula-cyan { background:rgba(0,206,201,.04)!important; border-color:rgba(0,206,201,.15)!important; color:var(--cyan)!important; }
+  .formula-pink { background:rgba(253,121,168,.04)!important; border-color:rgba(253,121,168,.15)!important; color:var(--pink)!important; }
+  .formula-blue { background:rgba(116,185,255,.04)!important; border-color:rgba(116,185,255,.15)!important; color:var(--blue)!important; }
+  .formula-green { background:rgba(85,239,196,.04)!important; border-color:rgba(85,239,196,.15)!important; color:var(--green)!important; }
+  .row .txt .key {
+    font-size:.83rem; padding:.65rem 1rem;
+    border-left:3px solid var(--purple); border-radius:0 8px 8px 0;
+    color:var(--text); line-height:1.7;
+  }
+  .key-gold   { background:rgba(253,203,110,.05); border-left-color:var(--gold)!important; }
+  .key-purple { background:rgba(108,92,231,.05); border-left-color:var(--purple)!important; }
+  .key-cyan   { background:rgba(0,206,201,.05); border-left-color:var(--cyan)!important; }
+  .key-pink   { background:rgba(253,121,168,.05); border-left-color:var(--pink)!important; }
+  .key-blue   { background:rgba(116,185,255,.05); border-left-color:var(--blue)!important; }
+  .key-green  { background:rgba(85,239,196,.05); border-left-color:var(--green)!important; }
+  .row .txt .tags { display:flex; flex-wrap:wrap; gap:.35rem; margin:.5rem 0; }
+  .row .txt .tags span {
+    font-size:.68rem; padding:.18rem .5rem; border-radius:5px;
+    background:rgba(255,255,255,.04); border:1px solid rgba(255,255,255,.08); color:var(--text);
+  }
+
+  /* ── Wide card ── */
+  .wide-card {
+    background:var(--card); border:1px solid var(--border); border-radius:16px;
+    padding:2rem; margin-bottom:2.5rem;
+    opacity:0; transform:translateY(30px);
+    transition: opacity .5s ease, transform .5s ease;
+  }
+  .wide-card.visible { opacity:1; transform:translateY(0); }
+  .wide-card h3 { font-size:1.12rem; font-weight:700; color:var(--gold); margin-bottom:1rem; }
+  .wide-card p { font-size:.86rem; color:var(--text2); margin-bottom:.8rem; }
+
+  /* ── Table ── */
+  .cmp-table { width:100%; border-collapse:collapse; margin:1rem 0; font-size:.78rem; }
+  .cmp-table th {
+    text-align:left; padding:.55rem .6rem;
+    color:var(--gold); border-bottom:1px solid var(--border);
+    background:rgba(253,203,110,.04); white-space:nowrap;
+  }
+  .cmp-table td {
+    padding:.45rem .6rem; color:var(--text2);
+    border-bottom:1px solid rgba(255,255,255,.03);
+  }
+  .cmp-table tr:hover td { background:rgba(255,255,255,.02); }
+  .cmp-table .hl { color:var(--green); font-weight:600; }
+
+  /* ── Footer ── */
+  footer {
+    text-align:center; padding:3rem 1rem 2rem;
+    font-size:.75rem; color:var(--text3);
+    border-top:1px solid var(--border);
+    max-width:1100px; margin:0 auto;
+  }
+  footer a { color:var(--gold); text-decoration:none; }
+</style>
+</head>
+<body>
+
+<!-- ══════════════════════ Hero ══════════════════════ -->
+<section class="hero">
+  <div class="hero-inner">
+    <div class="hero-badge">Mistral AI · arXiv 2401.04088 · 2024</div>
+    <h1>Mixtral of Experts</h1>
+    <p class="subtitle">首个达到 SOTA 的开源稀疏专家混合模型 —— 47B 总参数，仅 13B 活跃推理<br>以 1/5 的计算量超越 Llama 2 70B，指令版胜过 GPT-3.5 Turbo</p>
+    <div class="hero-meta">
+      <div class="item"><div class="val">8</div><div class="lbl">专家数量</div></div>
+      <div class="item"><div class="val">2</div><div class="lbl">每 Token 激活</div></div>
+      <div class="item"><div class="val">47B</div><div class="lbl">总参数</div></div>
+      <div class="item"><div class="val">13B</div><div class="lbl">活跃参数</div></div>
+      <div class="item"><div class="val">32K</div><div class="lbl">上下文长度</div></div>
+      <div class="item"><div class="val">8.30</div><div class="lbl">MT-Bench</div></div>
+    </div>
+  </div>
+  <div class="scroll-arrow"><svg viewBox="0 0 24 24"><polyline points="6 9 12 15 18 9"/></svg></div>
+</section>
+
+<!-- ══════════════════════ Nav ══════════════════════ -->
+<nav class="nav">
+  <a href="#s0">前置概念</a>
+  <a href="#s1">动机</a>
+  <a href="#s2">架构总览</a>
+  <a href="#s3">MoE 层</a>
+  <a href="#s4">门控路由</a>
+  <a href="#s5">SwiGLU 专家</a>
+  <a href="#s6">稀疏 vs 稠密</a>
+  <a href="#s7">性能评测</a>
+  <a href="#s8">多语言&amp;长文本</a>
+  <a href="#s9">路由分析</a>
+  <a href="#s10">指令微调</a>
+  <a href="#s11">总结</a>
+</nav>
+
+<!-- ══════════════════════ 0 前置概念 ══════════════════════ -->
+<div class="section" id="s0">
+  <div class="section-header"><div class="section-num sn-gold">0</div><div class="section-title">前置概念：什么是稀疏专家混合（Sparse MoE）</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320">
+        <!-- Dense FFN -->
+        <text x="110" y="25" fill="#fdcb6e" font-size="13" font-weight="700" text-anchor="middle">Dense FFN（稠密）</text>
+        <rect x="20" y="38" width="180" height="55" rx="10" fill="none" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="110" y="62" fill="#dddde4" font-size="11" text-anchor="middle">输入 x</text>
+        <text x="110" y="78" fill="#7e7e98" font-size="10" text-anchor="middle">→ 一个 FFN → 输出 y</text>
+        <text x="110" y="108" fill="#7e7e98" font-size="10" text-anchor="middle">每个 token 走完整 FFN</text>
+        <text x="110" y="123" fill="#e17055" font-size="10" text-anchor="middle">计算量 = 100%</text>
+
+        <!-- Sparse MoE -->
+        <text x="330" y="25" fill="#00cec9" font-size="13" font-weight="700" text-anchor="middle">Sparse MoE（稀疏）</text>
+        <rect x="240" y="38" width="180" height="130" rx="10" fill="none" stroke="#00cec9" stroke-width="1.5"/>
+        <text x="330" y="58" fill="#dddde4" font-size="11" text-anchor="middle">输入 x</text>
+        <!-- Router -->
+        <rect x="290" y="68" width="80" height="22" rx="6" fill="rgba(108,92,231,.2)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="330" y="83" fill="#6c5ce7" font-size="10" text-anchor="middle">Router 路由</text>
+        <!-- Experts grid -->
+        <rect x="256" y="100" width="28" height="20" rx="4" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1"/>
+        <text x="270" y="114" fill="#00cec9" font-size="8" text-anchor="middle">E₁</text>
+        <rect x="289" y="100" width="28" height="20" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="303" y="114" fill="#fdcb6e" font-size="8" font-weight="700" text-anchor="middle">E₂</text>
+        <rect x="322" y="100" width="28" height="20" rx="4" fill="rgba(0,206,201,.15)" stroke="#00cec9" stroke-width="1"/>
+        <text x="336" y="114" fill="#00cec9" font-size="8" text-anchor="middle">E₃</text>
+        <rect x="355" y="100" width="28" height="20" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="369" y="114" fill="#fdcb6e" font-size="8" font-weight="700" text-anchor="middle">E₅</text>
+        <text x="330" y="143" fill="#7e7e98" font-size="10" text-anchor="middle">仅激活 2/8 个专家</text>
+        <text x="330" y="158" fill="#55efc4" font-size="10" text-anchor="middle">计算量 ≈ 25%</text>
+
+        <!-- Bottom comparison -->
+        <line x1="20" y1="190" x2="420" y2="190" stroke="#1a1a2a" stroke-width="1"/>
+        <text x="220" y="215" fill="#dddde4" font-size="12" font-weight="600" text-anchor="middle">核心思想：用更多参数，但只激活一小部分</text>
+        <text x="220" y="240" fill="#7e7e98" font-size="10" text-anchor="middle">Dense: 参数量 = 计算量</text>
+        <text x="220" y="260" fill="#00cec9" font-size="10" text-anchor="middle">Sparse MoE: 参数量 ≫ 计算量</text>
+        <text x="220" y="285" fill="#fdcb6e" font-size="11" text-anchor="middle">Mixtral: 47B 参数 → 13B 计算 → 5x 效率</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">稠密模型 vs 稀疏专家混合</h3>
+      <p>传统 Transformer 的 <strong>每个 token</strong> 都要经过全部参数 —— 模型越大，推理越慢。稀疏专家混合（Sparse Mixture of Experts, SMoE）打破了这个绑定。</p>
+      <p>SMoE 的核心思路：把 FFN 层拆成多个"专家"（Expert），每个 token 只由一个 <strong>路由器（Router）</strong> 选出少数几个专家来处理。</p>
+      <div class="key key-gold">
+        <strong>核心优势：</strong><br>
+        · 参数总量大 → 模型容量高、知识丰富<br>
+        · 每次推理只激活部分参数 → 计算量小、速度快<br>
+        · "用存储换计算"：更多 VRAM，但更少 FLOPS
+      </div>
+      <div class="tags">
+        <span>条件计算</span>
+        <span>稀疏激活</span>
+        <span>路由选择</span>
+        <span>参数效率</span>
+      </div>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 280">
+        <text x="220" y="25" fill="#6c5ce7" font-size="14" font-weight="700" text-anchor="middle">MoE 发展简史</text>
+        <!-- Timeline -->
+        <line x1="60" y1="60" x2="380" y2="60" stroke="#6c5ce7" stroke-width="2" opacity=".3"/>
+        <!-- 1991 -->
+        <circle cx="80" cy="60" r="5" fill="#6c5ce7"/>
+        <text x="80" y="50" fill="#6c5ce7" font-size="9" text-anchor="middle">1991</text>
+        <text x="80" y="80" fill="#dddde4" font-size="9" text-anchor="middle">MoE 提出</text>
+        <text x="80" y="93" fill="#7e7e98" font-size="8" text-anchor="middle">Jacobs et al.</text>
+        <!-- 2017 -->
+        <circle cx="160" cy="60" r="5" fill="#fdcb6e"/>
+        <text x="160" y="50" fill="#fdcb6e" font-size="9" text-anchor="middle">2017</text>
+        <text x="160" y="80" fill="#dddde4" font-size="9" text-anchor="middle">Sparsely-Gated</text>
+        <text x="160" y="93" fill="#7e7e98" font-size="8" text-anchor="middle">Shazeer et al.</text>
+        <!-- 2020 -->
+        <circle cx="240" cy="60" r="5" fill="#00cec9"/>
+        <text x="240" y="50" fill="#00cec9" font-size="9" text-anchor="middle">2020</text>
+        <text x="240" y="80" fill="#dddde4" font-size="9" text-anchor="middle">GShard</text>
+        <text x="240" y="93" fill="#7e7e98" font-size="8" text-anchor="middle">Lepikhin et al.</text>
+        <!-- 2022 -->
+        <circle cx="300" cy="60" r="5" fill="#fd79a8"/>
+        <text x="300" y="50" fill="#fd79a8" font-size="9" text-anchor="middle">2022</text>
+        <text x="300" y="80" fill="#dddde4" font-size="9" text-anchor="middle">ST-MoE</text>
+        <text x="300" y="93" fill="#7e7e98" font-size="8" text-anchor="middle">Fedus et al.</text>
+        <!-- 2024 -->
+        <circle cx="370" cy="60" r="7" fill="#fdcb6e" stroke="#fff" stroke-width="2"/>
+        <text x="370" y="47" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">2024</text>
+        <text x="370" y="80" fill="#fdcb6e" font-size="9" font-weight="700" text-anchor="middle">Mixtral 8×7B</text>
+        <text x="370" y="93" fill="#7e7e98" font-size="8" text-anchor="middle">Mistral AI</text>
+
+        <!-- Key evolution -->
+        <rect x="40" y="115" width="360" height="150" rx="12" fill="rgba(108,92,231,.05)" stroke="#6c5ce7" stroke-width="1" opacity=".6"/>
+        <text x="220" y="140" fill="#dddde4" font-size="11" font-weight="600" text-anchor="middle">关键演变</text>
+        <text x="70" y="165" fill="#7e7e98" font-size="10">1991: MoE 最初用于集成学习</text>
+        <text x="70" y="185" fill="#7e7e98" font-size="10">2017: 首次将 MoE 嵌入 LSTM，Top-K 门控</text>
+        <text x="70" y="205" fill="#7e7e98" font-size="10">2020: GShard 将 MoE 用于 Transformer，交替层</text>
+        <text x="70" y="225" fill="#7e7e98" font-size="10">2021: Switch Transformer → Top-1 路由</text>
+        <text x="70" y="248" fill="#fdcb6e" font-size="10" font-weight="600">2024: Mixtral → 每层都用 MoE，Top-2，首个开源 SOTA</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">从 MoE 到 Mixtral 的演进</h3>
+      <p>MoE 的概念最早可以追溯到 1991 年 Jacobs 等人的工作，但真正在大规模语言模型中实用化是 2017 年 Shazeer 等人的 <strong>Sparsely-Gated MoE</strong>。</p>
+      <p>GShard（2020）首次在 Transformer 中使用 MoE，但只在<strong>交替层</strong>中替换 FFN。Switch Transformer（2021）简化为 Top-1 路由。</p>
+      <div class="key key-purple">
+        <strong>Mixtral 的关键区别：</strong><br>
+        · 每一层都替换为 MoE（而非交替层）<br>
+        · 使用 Top-2 路由（而非 Top-1）<br>
+        · 基于 Mistral 7B 架构，继承 GQA、SwiGLU 等优化<br>
+        · 首个在大规模基准上超越 70B 稠密模型的开源 MoE
+      </div>
+      <div class="tags">
+        <span>1991 MoE</span>
+        <span>2017 Sparsely-Gated</span>
+        <span>2020 GShard</span>
+        <span>2024 Mixtral</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 1 动机 ══════════════════════ -->
+<div class="section" id="s1">
+  <div class="section-header"><div class="section-num sn-purple">1</div><div class="section-title">论文动机：为什么要做稀疏 MoE？</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320">
+        <text x="220" y="28" fill="#fd79a8" font-size="13" font-weight="700" text-anchor="middle">稠密模型的困境</text>
+        <!-- Scaling curve -->
+        <line x1="60" y1="270" x2="400" y2="270" stroke="#7e7e98" stroke-width="1"/>
+        <line x1="60" y1="50" x2="60" y2="270" stroke="#7e7e98" stroke-width="1"/>
+        <text x="230" y="295" fill="#7e7e98" font-size="10" text-anchor="middle">模型参数量</text>
+        <text x="35" y="160" fill="#7e7e98" font-size="10" text-anchor="middle" transform="rotate(-90 35 160)">性能</text>
+        <!-- Dense curve -->
+        <path d="M80,260 Q150,180 200,140 Q260,100 350,70" fill="none" stroke="#fd79a8" stroke-width="2"/>
+        <text x="360" y="65" fill="#fd79a8" font-size="9">Dense</text>
+        <!-- Compute curve -->
+        <path d="M80,260 Q120,250 160,235 Q220,210 350,180" fill="none" stroke="#e17055" stroke-width="2" stroke-dasharray="4,3"/>
+        <text x="360" y="175" fill="#e17055" font-size="9">计算成本</text>
+        <!-- Cross point -->
+        <circle cx="260" cy="115" r="6" fill="none" stroke="#fdcb6e" stroke-width="2"/>
+        <text x="275" y="108" fill="#fdcb6e" font-size="9">收益递减</text>
+
+        <!-- MoE solution -->
+        <rect x="60" y="50" width="170" height="60" rx="10" fill="rgba(0,206,201,.05)" stroke="#00cec9" stroke-width="1" transform="translate(170,0)"/>
+        <text x="315" y="40" fill="#00cec9" font-size="11" font-weight="600" text-anchor="middle">MoE 的解法</text>
+        <text x="315" y="72" fill="#dddde4" font-size="9" text-anchor="middle">↑ 参数量（更多知识）</text>
+        <text x="315" y="90" fill="#dddde4" font-size="9" text-anchor="middle">↓ 计算量（稀疏激活）</text>
+        <text x="315" y="105" fill="#55efc4" font-size="9" text-anchor="middle">= 高效扩展</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">稠密模型的扩展困境</h3>
+      <p>大语言模型的 Scaling Law 告诉我们：模型越大，性能越好。但稠密模型的<strong>每一个参数</strong>在每次推理中都参与计算。</p>
+      <p>Llama 2 70B 有 700 亿参数，推理时全部激活 → 需要大量 GPU，推理速度慢。</p>
+      <div class="formula">
+        稠密模型: 计算量 ∝ 参数量 → 线性增长
+      </div>
+      <div class="formula formula-cyan">
+        MoE 模型: 计算量 ∝ 活跃参数量 ≪ 总参数量
+      </div>
+      <div class="key key-pink">
+        <strong>Mixtral 的核心卖点：</strong><br>
+        · 47B 总参数 → 知识容量接近 70B 模型<br>
+        · 13B 活跃参数 → 推理速度接近 13B 模型<br>
+        · 性能超越 Llama 2 70B → 效率提升 5 倍
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 2 架构总览 ══════════════════════ -->
+<div class="section" id="s2">
+  <div class="section-header"><div class="section-num sn-cyan">2</div><div class="section-title">模型架构总览</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 400">
+        <text x="220" y="25" fill="#00cec9" font-size="14" font-weight="700" text-anchor="middle">Mixtral 8×7B 架构</text>
+
+        <!-- Input -->
+        <rect x="150" y="40" width="140" height="30" rx="8" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="220" y="60" fill="#fdcb6e" font-size="11" text-anchor="middle">Token Embeddings</text>
+        <line x1="220" y1="70" x2="220" y2="88" stroke="#7e7e98" stroke-width="1" marker-end="url(#arr)"/>
+
+        <!-- Transformer Block -->
+        <rect x="80" y="90" width="280" height="230" rx="14" fill="rgba(0,206,201,.03)" stroke="#00cec9" stroke-width="1.5"/>
+        <text x="220" y="112" fill="#00cec9" font-size="11" font-weight="700" text-anchor="middle">× 32 Transformer Block</text>
+
+        <!-- RMSNorm + GQA -->
+        <rect x="130" y="122" width="180" height="28" rx="6" fill="rgba(116,185,255,.1)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="220" y="141" fill="#74b9ff" font-size="10" text-anchor="middle">RMSNorm → GQA Attention (32H/8KV)</text>
+
+        <line x1="220" y1="150" x2="220" y2="165" stroke="#7e7e98" stroke-width="1"/>
+        <text x="200" y="160" fill="#7e7e98" font-size="8">+ 残差</text>
+
+        <!-- RMSNorm -->
+        <rect x="130" y="168" width="180" height="22" rx="6" fill="rgba(116,185,255,.06)" stroke="#74b9ff" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="220" y="183" fill="#74b9ff" font-size="10" text-anchor="middle">RMSNorm</text>
+
+        <line x1="220" y1="190" x2="220" y2="202" stroke="#7e7e98" stroke-width="1"/>
+
+        <!-- MoE Layer -->
+        <rect x="100" y="205" width="240" height="100" rx="10" fill="rgba(253,203,110,.06)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="220" y="222" fill="#fdcb6e" font-size="11" font-weight="700" text-anchor="middle">Sparse MoE Layer（替换 FFN）</text>
+
+        <!-- Router -->
+        <rect x="170" y="232" width="100" height="20" rx="5" fill="rgba(108,92,231,.2)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="220" y="246" fill="#6c5ce7" font-size="9" text-anchor="middle">Router (Top-2)</text>
+
+        <!-- 8 experts -->
+        <rect x="115" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="127" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₀</text>
+        <rect x="143" y="260" width="24" height="18" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1.2"/>
+        <text x="155" y="273" fill="#fdcb6e" font-size="7" font-weight="700" text-anchor="middle">E₁</text>
+        <rect x="171" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="183" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₂</text>
+        <rect x="199" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="211" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₃</text>
+        <rect x="227" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="239" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₄</text>
+        <rect x="255" y="260" width="24" height="18" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1.2"/>
+        <text x="267" y="273" fill="#fdcb6e" font-size="7" font-weight="700" text-anchor="middle">E₅</text>
+        <rect x="283" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="295" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₆</text>
+        <rect x="311" y="260" width="24" height="18" rx="4" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width=".8"/>
+        <text x="323" y="273" fill="#00cec9" font-size="7" text-anchor="middle">E₇</text>
+
+        <text x="220" y="298" fill="#7e7e98" font-size="9" text-anchor="middle">⬆ 每 token 选 2 个 · 加权求和 ⬆</text>
+
+        <line x1="220" y1="310" x2="220" y2="320" stroke="#7e7e98" stroke-width="1"/>
+        <text x="200" y="318" fill="#7e7e98" font-size="8">+ 残差</text>
+
+        <!-- Output -->
+        <rect x="150" y="335" width="140" height="28" rx="8" fill="rgba(253,121,168,.12)" stroke="#fd79a8" stroke-width="1.5"/>
+        <text x="220" y="354" fill="#fd79a8" font-size="10" text-anchor="middle">RMSNorm → Linear → Softmax</text>
+
+        <defs><marker id="arr" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7e7e98"/></marker></defs>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">基于 Mistral 7B 的 MoE 扩展</h3>
+      <p>Mixtral 的整体架构基于 Mistral 7B，继承了其所有设计优化，<strong>唯一区别</strong>是把每一层的 FFN 替换为 Sparse MoE 层。</p>
+      <div class="formula formula-cyan">
+        Transformer Block = RMSNorm + GQA + RMSNorm + MoE
+      </div>
+      <p><strong>架构参数：</strong></p>
+      <div class="key key-cyan">
+        · 嵌入维度 (dim): <strong>4096</strong><br>
+        · 层数 (n_layers): <strong>32</strong><br>
+        · 注意力头 (n_heads): <strong>32</strong>，KV 头: <strong>8</strong>（GQA）<br>
+        · 头维度 (head_dim): <strong>128</strong><br>
+        · FFN 隐藏维度 (hidden_dim): <strong>14336</strong><br>
+        · 上下文长度: <strong>32768</strong><br>
+        · 词汇表: <strong>32000</strong><br>
+        · 专家数 (num_experts): <strong>8</strong><br>
+        · 每 token 激活 (top_k): <strong>2</strong>
+      </div>
+      <div class="tags">
+        <span>RMSNorm</span>
+        <span>GQA</span>
+        <span>RoPE</span>
+        <span>SwiGLU</span>
+        <span>Sliding Window Attn</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 3 MoE 层 ══════════════════════ -->
+<div class="section" id="s3">
+  <div class="section-header"><div class="section-num sn-gold">3</div><div class="section-title">MoE 层：核心机制详解</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360">
+        <text x="220" y="25" fill="#fdcb6e" font-size="13" font-weight="700" text-anchor="middle">MoE 层数据流</text>
+
+        <!-- Input token -->
+        <rect x="170" y="40" width="100" height="28" rx="8" fill="rgba(116,185,255,.15)" stroke="#74b9ff" stroke-width="1.5"/>
+        <text x="220" y="59" fill="#74b9ff" font-size="11" text-anchor="middle">输入 x</text>
+
+        <!-- Split to router and all experts -->
+        <line x1="220" y1="68" x2="220" y2="90" stroke="#7e7e98" stroke-width="1"/>
+
+        <!-- Router box -->
+        <rect x="140" y="92" width="160" height="40" rx="8" fill="rgba(108,92,231,.12)" stroke="#6c5ce7" stroke-width="1.5"/>
+        <text x="220" y="110" fill="#6c5ce7" font-size="11" font-weight="600" text-anchor="middle">Router: x · W_g</text>
+        <text x="220" y="126" fill="#7e7e98" font-size="9" text-anchor="middle">→ 8 维 logits → TopK → Softmax</text>
+
+        <!-- Gating output -->
+        <line x1="220" y1="132" x2="220" y2="150" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="220" y="148" fill="#6c5ce7" font-size="9" text-anchor="middle">门控权重 G(x)</text>
+
+        <!-- Selected experts -->
+        <line x1="220" y1="155" x2="150" y2="180" stroke="#fdcb6e" stroke-width="1.2"/>
+        <line x1="220" y1="155" x2="290" y2="180" stroke="#fdcb6e" stroke-width="1.2"/>
+
+        <!-- Expert 3 (selected) -->
+        <rect x="100" y="182" width="100" height="55" rx="8" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="150" y="200" fill="#fdcb6e" font-size="10" font-weight="600" text-anchor="middle">Expert i (SwiGLU)</text>
+        <text x="150" y="218" fill="#7e7e98" font-size="9" text-anchor="middle">权重: g_i = 0.62</text>
+        <text x="150" y="232" fill="#dddde4" font-size="9" text-anchor="middle">E_i(x)</text>
+
+        <!-- Expert 7 (selected) -->
+        <rect x="240" y="182" width="100" height="55" rx="8" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="290" y="200" fill="#fdcb6e" font-size="10" font-weight="600" text-anchor="middle">Expert j (SwiGLU)</text>
+        <text x="290" y="218" fill="#7e7e98" font-size="9" text-anchor="middle">权重: g_j = 0.38</text>
+        <text x="290" y="232" fill="#dddde4" font-size="9" text-anchor="middle">E_j(x)</text>
+
+        <!-- Weighted sum -->
+        <line x1="150" y1="237" x2="220" y2="270" stroke="#fdcb6e" stroke-width="1.2"/>
+        <line x1="290" y1="237" x2="220" y2="270" stroke="#fdcb6e" stroke-width="1.2"/>
+        <circle cx="220" cy="275" r="14" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="220" y="280" fill="#fdcb6e" font-size="12" font-weight="700" text-anchor="middle">Σ</text>
+
+        <!-- Output -->
+        <line x1="220" y1="289" x2="220" y2="310" stroke="#fdcb6e" stroke-width="1.2"/>
+        <rect x="150" y="312" width="140" height="28" rx="8" fill="rgba(85,239,196,.12)" stroke="#55efc4" stroke-width="1.5"/>
+        <text x="220" y="331" fill="#55efc4" font-size="11" text-anchor="middle">y = g_i·E_i(x) + g_j·E_j(x)</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">MoE 层的三步流水线</h3>
+      <p><strong>第一步 —— 路由计算：</strong> 输入 x 通过线性层 W_g 得到 8 个 logit，取 Top-2，对 Top-2 做 Softmax 得到门控权重。</p>
+      <p><strong>第二步 —— 专家计算：</strong> 只计算被选中的 2 个专家的 SwiGLU FFN 输出，其余 6 个专家完全跳过。</p>
+      <p><strong>第三步 —— 加权聚合：</strong> 两个专家的输出按门控权重加权求和，作为 MoE 层的最终输出。</p>
+      <div class="formula">
+        y = Σᵢ G(x)ᵢ · Eᵢ(x)
+      </div>
+      <div class="formula formula-purple">
+        G(x) = Softmax(TopK(x · W_g))
+      </div>
+      <div class="formula formula-cyan">
+        TopK(ℓ)ᵢ = ℓᵢ (if top-K) | -∞ (otherwise)
+      </div>
+      <div class="key key-gold">
+        <strong>关键设计：</strong><br>
+        · 未被选中的专家 gate=0 → 不计算 → 节省算力<br>
+        · K=2 意味着每 token 只用 2/8 = 25% 的 FFN 参数<br>
+        · 但不同 token 可选不同专家 → 每个 token "看到" 全部 47B
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 4 门控路由 ══════════════════════ -->
+<div class="section" id="s4">
+  <div class="section-header"><div class="section-num sn-purple">4</div><div class="section-title">门控路由：Router 如何选择专家</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340">
+        <text x="220" y="25" fill="#6c5ce7" font-size="13" font-weight="700" text-anchor="middle">Top-2 路由过程（数值示例）</text>
+
+        <!-- Input -->
+        <rect x="130" y="40" width="180" height="25" rx="6" fill="rgba(116,185,255,.1)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="220" y="57" fill="#74b9ff" font-size="10" text-anchor="middle">x ∈ ℝ⁴⁰⁹⁶ (token hidden state)</text>
+
+        <line x1="220" y1="65" x2="220" y2="82" stroke="#7e7e98" stroke-width="1"/>
+        <text x="270" y="77" fill="#7e7e98" font-size="9">× W_g ∈ ℝ⁴⁰⁹⁶ˣ⁸</text>
+
+        <!-- Logits -->
+        <text x="220" y="98" fill="#dddde4" font-size="10" text-anchor="middle">原始 Logits ℓ ∈ ℝ⁸</text>
+        <rect x="60" y="105" width="320" height="28" rx="6" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="100" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">1.2</text>
+        <text x="140" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">0.3</text>
+        <text x="180" y="124" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">3.8</text>
+        <text x="220" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">0.1</text>
+        <text x="260" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">-0.5</text>
+        <text x="300" y="124" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">2.9</text>
+        <text x="340" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">0.7</text>
+        <text x="370" y="124" fill="#7e7e98" font-size="9" text-anchor="middle">-0.2</text>
+
+        <line x1="220" y1="133" x2="220" y2="150" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="285" y="145" fill="#6c5ce7" font-size="9">Top-2 选择</text>
+
+        <!-- After TopK -->
+        <text x="220" y="165" fill="#dddde4" font-size="10" text-anchor="middle">Top-2 后（其余设为 -∞）</text>
+        <rect x="60" y="172" width="320" height="28" rx="6" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="100" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+        <text x="140" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+        <text x="180" y="191" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">3.8</text>
+        <text x="220" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+        <text x="260" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+        <text x="300" y="191" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">2.9</text>
+        <text x="340" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+        <text x="370" y="191" fill="#55556a" font-size="9" text-anchor="middle">-∞</text>
+
+        <line x1="220" y1="200" x2="220" y2="218" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="285" y="212" fill="#6c5ce7" font-size="9">Softmax</text>
+
+        <!-- Softmax output -->
+        <text x="220" y="232" fill="#dddde4" font-size="10" text-anchor="middle">门控权重 G(x)</text>
+        <rect x="60" y="238" width="320" height="28" rx="6" fill="rgba(253,203,110,.08)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="100" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+        <text x="140" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+        <text x="180" y="257" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">0.71</text>
+        <text x="220" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+        <text x="260" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+        <text x="300" y="257" fill="#fdcb6e" font-size="10" font-weight="700" text-anchor="middle">0.29</text>
+        <text x="340" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+        <text x="370" y="257" fill="#55556a" font-size="9" text-anchor="middle">0</text>
+
+        <!-- Result -->
+        <text x="220" y="295" fill="#55efc4" font-size="11" font-weight="600" text-anchor="middle">→ 激活 Expert 2 (权重 0.71) + Expert 5 (权重 0.29)</text>
+        <text x="220" y="315" fill="#7e7e98" font-size="10" text-anchor="middle">y = 0.71 · E₂(x) + 0.29 · E₅(x)</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">Top-K 门控的数值流程</h3>
+      <p><strong>Step 1 线性投影：</strong> 输入 x ∈ ℝ⁴⁰⁹⁶ 乘以门控矩阵 W_g ∈ ℝ⁴⁰⁹⁶ˣ⁸，得到 8 维 logit 向量。</p>
+      <p><strong>Step 2 Top-K 截断：</strong> 保留最大的 K=2 个 logit，其余设为 -∞。经过 Softmax 后，-∞ → 0。</p>
+      <p><strong>Step 3 Softmax 归一化：</strong> 对留下的 2 个 logit 做 Softmax，得到归一化权重（和为 1）。</p>
+      <div class="formula formula-purple">
+        Softmax(3.8, 2.9) = (e³·⁸/(e³·⁸+e²·⁹), e²·⁹/(e³·⁸+e²·⁹))
+        ≈ (0.71, 0.29)
+      </div>
+      <div class="key key-purple">
+        <strong>为什么用 Top-2 而非 Top-1？</strong><br>
+        · Top-1（Switch Transformer）更高效但容量受限<br>
+        · Top-2 允许两个专家"协作"，信息更丰富<br>
+        · 加权组合 → 专家间可以互补（一个负责通用模式，另一个负责特殊模式）
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 5 SwiGLU 专家 ══════════════════════ -->
+<div class="section" id="s5">
+  <div class="section-header"><div class="section-num sn-cyan">5</div><div class="section-title">SwiGLU 专家网络</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320">
+        <text x="220" y="25" fill="#00cec9" font-size="13" font-weight="700" text-anchor="middle">SwiGLU FFN 结构</text>
+
+        <!-- Input -->
+        <rect x="160" y="42" width="120" height="25" rx="6" fill="rgba(116,185,255,.12)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="220" y="59" fill="#74b9ff" font-size="10" text-anchor="middle">x ∈ ℝ⁴⁰⁹⁶</text>
+
+        <!-- Split -->
+        <line x1="220" y1="67" x2="150" y2="95" stroke="#7e7e98" stroke-width="1"/>
+        <line x1="220" y1="67" x2="290" y2="95" stroke="#7e7e98" stroke-width="1"/>
+
+        <!-- W1 branch (gate) -->
+        <rect x="100" y="98" width="100" height="28" rx="6" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="150" y="117" fill="#fdcb6e" font-size="10" text-anchor="middle">W₁ · x  (4096→14336)</text>
+
+        <!-- W3 branch (up) -->
+        <rect x="240" y="98" width="100" height="28" rx="6" fill="rgba(0,206,201,.1)" stroke="#00cec9" stroke-width="1"/>
+        <text x="290" y="117" fill="#00cec9" font-size="10" text-anchor="middle">W₃ · x  (4096→14336)</text>
+
+        <!-- Swish -->
+        <line x1="150" y1="126" x2="150" y2="148" stroke="#fdcb6e" stroke-width="1"/>
+        <rect x="110" y="150" width="80" height="25" rx="6" fill="rgba(253,203,110,.15)" stroke="#fdcb6e" stroke-width="1.2"/>
+        <text x="150" y="167" fill="#fdcb6e" font-size="10" text-anchor="middle">Swish(·)</text>
+        <text x="150" y="190" fill="#7e7e98" font-size="9" text-anchor="middle">= x · σ(x)</text>
+
+        <!-- Down to Hadamard -->
+        <line x1="150" y1="195" x2="220" y2="218" stroke="#fdcb6e" stroke-width="1"/>
+        <line x1="290" y1="126" x2="290" y2="214" stroke="#00cec9" stroke-width="1"/>
+        <line x1="290" y1="214" x2="220" y2="218" stroke="#00cec9" stroke-width="1"/>
+
+        <!-- Hadamard product -->
+        <circle cx="220" cy="225" r="14" fill="rgba(253,121,168,.12)" stroke="#fd79a8" stroke-width="1.5"/>
+        <text x="220" y="230" fill="#fd79a8" font-size="13" font-weight="700" text-anchor="middle">⊙</text>
+        <text x="258" y="228" fill="#7e7e98" font-size="9">逐元素乘</text>
+
+        <!-- W2 down projection -->
+        <line x1="220" y1="239" x2="220" y2="258" stroke="#7e7e98" stroke-width="1"/>
+        <rect x="145" y="260" width="150" height="28" rx="6" fill="rgba(85,239,196,.1)" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="279" fill="#55efc4" font-size="10" text-anchor="middle">W₂ · (·)  (14336→4096)</text>
+
+        <!-- Output -->
+        <line x1="220" y1="288" x2="220" y2="305" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="318" fill="#55efc4" font-size="11" font-weight="600" text-anchor="middle">输出 ∈ ℝ⁴⁰⁹⁶</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-cyan">每个专家 = 一个完整的 SwiGLU FFN</h3>
+      <p>Mixtral 中每个专家 Eᵢ 就是一个标准的 SwiGLU 前馈网络，与 LLaMA / Mistral 7B 中的 FFN 结构完全一致。</p>
+      <div class="formula formula-cyan">
+        SwiGLU(x) = W₂ · (Swish(W₁·x) ⊙ W₃·x)
+      </div>
+      <p><strong>参数量计算（每个专家）：</strong></p>
+      <div class="key key-cyan">
+        · W₁: 4096 × 14336 = <strong>58.7M</strong><br>
+        · W₃: 4096 × 14336 = <strong>58.7M</strong><br>
+        · W₂: 14336 × 4096 = <strong>58.7M</strong><br>
+        · 每个专家: <strong>~176M</strong> 参数<br>
+        · 8 个专家 × 32 层 = <strong>~45B</strong> 专家参数<br>
+        · + 注意力层 + 嵌入 ≈ <strong>47B</strong> 总参数
+      </div>
+      <p>而推理时每 token 只激活 2 个专家 → 活跃参数 ≈ <strong>13B</strong>（2×176M×32 + 注意力参数）</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 6 稀疏 vs 稠密 ══════════════════════ -->
+<div class="section" id="s6">
+  <div class="section-header"><div class="section-num sn-green">6</div><div class="section-title">稀疏参数 vs 活跃参数 vs 计算量</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 320">
+        <text x="220" y="25" fill="#55efc4" font-size="13" font-weight="700" text-anchor="middle">参数 · 计算 · 内存 对比</text>
+
+        <!-- Bar chart -->
+        <!-- Labels -->
+        <text x="100" y="60" fill="#7e7e98" font-size="10" text-anchor="middle">Llama 2 70B</text>
+        <text x="220" y="60" fill="#fdcb6e" font-size="10" font-weight="600" text-anchor="middle">Mixtral 8×7B</text>
+        <text x="340" y="60" fill="#7e7e98" font-size="10" text-anchor="middle">Mistral 7B</text>
+
+        <!-- Total params -->
+        <text x="30" y="95" fill="#7e7e98" font-size="9" text-anchor="end">总参数</text>
+        <rect x="55" y="80" width="90" height="20" rx="4" fill="rgba(253,121,168,.2)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="100" y="94" fill="#fd79a8" font-size="9" text-anchor="middle">70B</text>
+        <rect x="175" y="80" width="90" height="20" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="220" y="94" fill="#fdcb6e" font-size="9" text-anchor="middle">47B</text>
+        <rect x="315" y="80" width="50" height="20" rx="4" fill="rgba(116,185,255,.15)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="340" y="94" fill="#74b9ff" font-size="9" text-anchor="middle">7B</text>
+
+        <!-- Active params -->
+        <text x="30" y="130" fill="#7e7e98" font-size="9" text-anchor="end">活跃参数</text>
+        <rect x="55" y="115" width="90" height="20" rx="4" fill="rgba(253,121,168,.2)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="100" y="129" fill="#fd79a8" font-size="9" text-anchor="middle">70B</text>
+        <rect x="175" y="115" width="45" height="20" rx="4" fill="rgba(85,239,196,.25)" stroke="#55efc4" stroke-width="1.5"/>
+        <text x="197" y="129" fill="#55efc4" font-size="9" font-weight="700" text-anchor="middle">13B</text>
+        <rect x="315" y="115" width="50" height="20" rx="4" fill="rgba(116,185,255,.15)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="340" y="129" fill="#74b9ff" font-size="9" text-anchor="middle">7B</text>
+
+        <!-- VRAM -->
+        <text x="30" y="165" fill="#7e7e98" font-size="9" text-anchor="end">显存需求</text>
+        <rect x="55" y="150" width="90" height="20" rx="4" fill="rgba(253,121,168,.2)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="100" y="164" fill="#fd79a8" font-size="9" text-anchor="middle">~140 GB</text>
+        <rect x="175" y="150" width="65" height="20" rx="4" fill="rgba(253,203,110,.2)" stroke="#fdcb6e" stroke-width="1"/>
+        <text x="207" y="164" fill="#fdcb6e" font-size="9" text-anchor="middle">~94 GB</text>
+        <rect x="315" y="150" width="32" height="20" rx="4" fill="rgba(116,185,255,.15)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="331" y="164" fill="#74b9ff" font-size="9" text-anchor="middle">~14 GB</text>
+
+        <!-- Key insight -->
+        <rect x="50" y="195" width="340" height="105" rx="10" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="218" fill="#55efc4" font-size="11" font-weight="600" text-anchor="middle">关键洞察</text>
+        <text x="220" y="240" fill="#dddde4" font-size="10" text-anchor="middle">推理速度 ∝ 活跃参数（13B），接近 Mistral 7B</text>
+        <text x="220" y="260" fill="#dddde4" font-size="10" text-anchor="middle">显存需求 ∝ 总参数（47B），仍小于 Llama 2 70B</text>
+        <text x="220" y="280" fill="#fdcb6e" font-size="10" text-anchor="middle">性能 ≥ Llama 2 70B（因为 47B 参数容量）</text>
+        <text x="220" y="296" fill="#55efc4" font-size="10" font-weight="600" text-anchor="middle">= 用 Llama 13B 级别的速度拿到 70B 级别的质量</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-green">三个关键概念</h3>
+      <p><strong>总参数（Sparse Parameters）</strong> = 47B：模型的全部权重，决定显存消耗和知识容量。</p>
+      <p><strong>活跃参数（Active Parameters）</strong> = 13B：每个 token 推理时实际参与计算的参数，决定推理速度。</p>
+      <p><strong>计算量（FLOPS）</strong> ∝ 活跃参数：推理成本与活跃参数成正比，与总参数无关。</p>
+      <div class="formula formula-green">
+        Mixtral 效率 = 性能(47B) / 计算(13B) ≈ 5× Llama 2 70B
+      </div>
+      <div class="key key-green">
+        <strong>Expert Parallelism（专家并行）：</strong><br>
+        · 不同专家可以放在不同 GPU 上<br>
+        · Token 路由到对应 GPU 计算后返回<br>
+        · 挑战：负载均衡（某些专家可能被过度选择）<br>
+        · Megablocks 内核：将 MoE 转化为大稀疏矩阵乘法
+      </div>
+      <div class="tags">
+        <span>Expert Parallelism</span>
+        <span>Megablocks</span>
+        <span>负载均衡</span>
+        <span>稀疏矩阵乘</span>
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 7 性能评测 ══════════════════════ -->
+<div class="section" id="s7">
+  <div class="section-header"><div class="section-num sn-pink">7</div><div class="section-title">性能评测：全面超越 Llama 2 70B</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340">
+        <text x="220" y="25" fill="#fd79a8" font-size="13" font-weight="700" text-anchor="middle">核心基准对比（Mixtral vs Llama 2 70B）</text>
+
+        <!-- Radar-like comparison bars -->
+        <!-- MMLU -->
+        <text x="55" y="62" fill="#7e7e98" font-size="9" text-anchor="end">MMLU</text>
+        <rect x="60" y="50" width="210" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="50" width="212" height="14" rx="3" fill="rgba(253,203,110,.2)" stroke="none"/>
+        <text x="278" y="61" fill="#fdcb6e" font-size="8" font-weight="700">70.6%</text>
+        <text x="310" y="61" fill="#7e7e98" font-size="8">vs 69.9%</text>
+
+        <!-- HellaSwag -->
+        <text x="55" y="86" fill="#7e7e98" font-size="9" text-anchor="end">HellaSwag</text>
+        <rect x="60" y="74" width="260" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="74" width="254" height="14" rx="3" fill="rgba(253,203,110,.2)" stroke="none"/>
+        <text x="278" y="85" fill="#7e7e98" font-size="8">84.4% vs 85.4%</text>
+
+        <!-- ARC-c -->
+        <text x="55" y="110" fill="#7e7e98" font-size="9" text-anchor="end">ARC-c</text>
+        <rect x="60" y="98" width="170" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="98" width="180" height="14" rx="3" fill="rgba(253,203,110,.2)" stroke="none"/>
+        <text x="278" y="109" fill="#fdcb6e" font-size="8" font-weight="700">59.7%</text>
+        <text x="310" y="109" fill="#7e7e98" font-size="8">vs 56.5%</text>
+
+        <!-- HumanEval -->
+        <text x="55" y="134" fill="#7e7e98" font-size="9" text-anchor="end">HumanE</text>
+        <rect x="60" y="122" width="88" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="122" width="121" height="14" rx="3" fill="rgba(85,239,196,.25)" stroke="none"/>
+        <text x="278" y="133" fill="#55efc4" font-size="8" font-weight="700">40.2%</text>
+        <text x="310" y="133" fill="#7e7e98" font-size="8">vs 29.3%</text>
+        <text x="375" y="133" fill="#55efc4" font-size="7">+37%!</text>
+
+        <!-- MBPP -->
+        <text x="55" y="158" fill="#7e7e98" font-size="9" text-anchor="end">MBPP</text>
+        <rect x="60" y="146" width="150" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="146" width="183" height="14" rx="3" fill="rgba(85,239,196,.25)" stroke="none"/>
+        <text x="278" y="157" fill="#55efc4" font-size="8" font-weight="700">60.7%</text>
+        <text x="310" y="157" fill="#7e7e98" font-size="8">vs 49.8%</text>
+        <text x="375" y="157" fill="#55efc4" font-size="7">+22%!</text>
+
+        <!-- GSM8K -->
+        <text x="55" y="182" fill="#7e7e98" font-size="9" text-anchor="end">GSM8K</text>
+        <rect x="60" y="170" width="210" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="170" width="224" height="14" rx="3" fill="rgba(85,239,196,.25)" stroke="none"/>
+        <text x="278" y="181" fill="#55efc4" font-size="8" font-weight="700">74.4%</text>
+        <text x="310" y="181" fill="#7e7e98" font-size="8">vs 69.6%</text>
+
+        <!-- MATH -->
+        <text x="55" y="206" fill="#7e7e98" font-size="9" text-anchor="end">MATH</text>
+        <rect x="60" y="194" width="42" height="14" rx="3" fill="rgba(253,121,168,.12)" stroke="none"/>
+        <rect x="60" y="194" width="85" height="14" rx="3" fill="rgba(85,239,196,.3)" stroke="none"/>
+        <text x="278" y="205" fill="#55efc4" font-size="8" font-weight="700">28.4%</text>
+        <text x="310" y="205" fill="#7e7e98" font-size="8">vs 13.8%</text>
+        <text x="375" y="205" fill="#55efc4" font-size="7">+106%!</text>
+
+        <!-- Legend -->
+        <rect x="60" y="235" width="12" height="10" rx="2" fill="rgba(253,203,110,.3)"/>
+        <text x="78" y="244" fill="#fdcb6e" font-size="9">Mixtral 8×7B (13B 活跃)</text>
+        <rect x="220" y="235" width="12" height="10" rx="2" fill="rgba(253,121,168,.2)"/>
+        <text x="238" y="244" fill="#fd79a8" font-size="9">Llama 2 70B (70B 活跃)</text>
+
+        <!-- Summary -->
+        <rect x="60" y="265" width="320" height="55" rx="10" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="285" fill="#55efc4" font-size="10" font-weight="600" text-anchor="middle">数学 +106%、代码 +37%、综合持平</text>
+        <text x="220" y="305" fill="#7e7e98" font-size="9" text-anchor="middle">用 5 倍少的计算量，在数学和代码上大幅超越 70B 稠密模型</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-pink">Mixtral vs Llama 2 70B：5× 更少计算，更强性能</h3>
+      <p>Mixtral 仅使用 <strong>13B 活跃参数</strong>，在几乎所有基准上匹配或超越使用 <strong>70B 参数</strong>的 Llama 2 70B。</p>
+      <p>尤其在<strong>数学</strong>（MATH +106%）和<strong>代码</strong>（HumanEval +37%）上优势巨大。</p>
+      <div class="key key-pink">
+        <strong>与 GPT-3.5 对比：</strong><br>
+        · MMLU: 70.6% vs 70.0% ✅<br>
+        · HellaSwag: 86.7% vs 85.5% ✅<br>
+        · MBPP: 60.7% vs 52.2% ✅<br>
+        · GSM-8K: 58.4% vs 57.1% ✅<br>
+        · MT-Bench (Instruct): 8.30 vs 8.32 ≈ 持平
+      </div>
+      <p>结论：Mixtral 是当时<strong>首个在多数基准上匹配或超越 GPT-3.5 的开源模型</strong>。</p>
+    </div>
+  </div>
+
+  <!-- Full benchmark table -->
+  <div class="wide-card">
+    <h3>完整基准评测数据</h3>
+    <div style="overflow-x:auto;">
+      <table class="cmp-table">
+        <tr>
+          <th>模型</th><th>活跃参数</th><th>MMLU</th><th>HellaSwag</th><th>WinoG</th><th>ARC-e</th><th>ARC-c</th><th>NQ</th><th>TriviaQA</th><th>HumanE</th><th>MBPP</th><th>MATH</th><th>GSM8K</th>
+        </tr>
+        <tr>
+          <td>LLaMA 2 7B</td><td>7B</td><td>44.4%</td><td>77.1%</td><td>69.5%</td><td>68.7%</td><td>43.2%</td><td>17.5%</td><td>56.6%</td><td>11.6%</td><td>26.1%</td><td>3.9%</td><td>16.0%</td>
+        </tr>
+        <tr>
+          <td>LLaMA 2 13B</td><td>13B</td><td>55.6%</td><td>80.7%</td><td>72.9%</td><td>75.2%</td><td>48.8%</td><td>16.7%</td><td>64.0%</td><td>18.9%</td><td>35.4%</td><td>6.0%</td><td>34.3%</td>
+        </tr>
+        <tr>
+          <td>LLaMA 2 70B</td><td>70B</td><td>69.9%</td><td>85.4%</td><td>80.4%</td><td>79.9%</td><td>56.5%</td><td>25.4%</td><td>73.0%</td><td>29.3%</td><td>49.8%</td><td>13.8%</td><td>69.6%</td>
+        </tr>
+        <tr>
+          <td>Mistral 7B</td><td>7B</td><td>62.5%</td><td>81.0%</td><td>74.2%</td><td>80.5%</td><td>54.9%</td><td>23.2%</td><td>62.5%</td><td>26.2%</td><td>50.2%</td><td>12.7%</td><td>50.0%</td>
+        </tr>
+        <tr style="background:rgba(253,203,110,.06);">
+          <td style="color:var(--gold);font-weight:700;">Mixtral 8×7B</td>
+          <td class="hl">13B</td>
+          <td class="hl">70.6%</td><td>84.4%</td><td>77.2%</td><td class="hl">83.1%</td><td class="hl">59.7%</td><td class="hl">30.6%</td><td>71.5%</td><td class="hl">40.2%</td><td class="hl">60.7%</td><td class="hl">28.4%</td><td class="hl">74.4%</td>
+        </tr>
+      </table>
+    </div>
+    <p style="font-size:.8rem;color:var(--text3);margin-top:.5rem;">绿色标注 = Mixtral 超越所有对比模型的指标</p>
+  </div>
+</div>
+
+<!-- ══════════════════════ 8 多语言 & 长文本 ══════════════════════ -->
+<div class="section" id="s8">
+  <div class="section-header"><div class="section-num sn-blue">8</div><div class="section-title">多语言能力 &amp; 32K 长文本</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 300">
+        <text x="220" y="25" fill="#74b9ff" font-size="13" font-weight="700" text-anchor="middle">多语言性能 vs Llama 2 70B</text>
+
+        <!-- Languages -->
+        <text x="60" y="60" fill="#fdcb6e" font-size="10" text-anchor="start">🇫🇷 法语</text>
+        <text x="60" y="90" fill="#fdcb6e" font-size="10" text-anchor="start">🇩🇪 德语</text>
+        <text x="60" y="120" fill="#fdcb6e" font-size="10" text-anchor="start">🇪🇸 西班牙语</text>
+        <text x="60" y="150" fill="#fdcb6e" font-size="10" text-anchor="start">🇮🇹 意大利语</text>
+
+        <!-- MMLU bars -->
+        <text x="180" y="45" fill="#7e7e98" font-size="9" text-anchor="middle">MMLU</text>
+        <!-- FR -->
+        <rect x="150" y="50" width="43" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="150" y="50" width="47" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="205" y="61" fill="#fdcb6e" font-size="8">70.9</text>
+        <text x="225" y="61" fill="#7e7e98" font-size="7">vs 64.3</text>
+        <!-- DE -->
+        <rect x="150" y="80" width="43" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="150" y="80" width="48" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="205" y="91" fill="#fdcb6e" font-size="8">71.5</text>
+        <text x="225" y="91" fill="#7e7e98" font-size="7">vs 64.2</text>
+        <!-- ES -->
+        <rect x="150" y="110" width="44" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="150" y="110" width="49" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="205" y="121" fill="#fdcb6e" font-size="8">72.5</text>
+        <text x="225" y="121" fill="#7e7e98" font-size="7">vs 66.0</text>
+        <!-- IT -->
+        <rect x="150" y="140" width="44" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="150" y="140" width="48" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="205" y="151" fill="#fdcb6e" font-size="8">70.9</text>
+        <text x="225" y="151" fill="#7e7e98" font-size="7">vs 65.1</text>
+
+        <!-- ARC-c bars -->
+        <text x="340" y="45" fill="#7e7e98" font-size="9" text-anchor="middle">ARC-c</text>
+        <!-- FR -->
+        <rect x="310" y="50" width="33" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="310" y="50" width="39" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="358" y="61" fill="#fdcb6e" font-size="8">58.2</text>
+        <text x="378" y="61" fill="#7e7e98" font-size="7">vs 49.9</text>
+        <!-- DE -->
+        <rect x="310" y="80" width="32" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="310" y="80" width="36" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="358" y="91" fill="#fdcb6e" font-size="8">54.3</text>
+        <text x="378" y="91" fill="#7e7e98" font-size="7">vs 47.3</text>
+        <!-- ES -->
+        <rect x="310" y="110" width="34" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="310" y="110" width="37" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="358" y="121" fill="#fdcb6e" font-size="8">55.4</text>
+        <text x="378" y="121" fill="#7e7e98" font-size="7">vs 50.5</text>
+        <!-- IT -->
+        <rect x="310" y="140" width="33" height="12" rx="2" fill="rgba(253,121,168,.15)"/>
+        <rect x="310" y="140" width="35" height="12" rx="2" fill="rgba(253,203,110,.25)"/>
+        <text x="358" y="151" fill="#fdcb6e" font-size="8">52.8</text>
+        <text x="378" y="151" fill="#7e7e98" font-size="7">vs 49.4</text>
+
+        <!-- Long context -->
+        <line x1="40" y1="180" x2="400" y2="180" stroke="#1a1a2a" stroke-width="1"/>
+        <text x="220" y="205" fill="#74b9ff" font-size="13" font-weight="700" text-anchor="middle">32K 长文本：Passkey 检索</text>
+
+        <rect x="60" y="220" width="320" height="60" rx="10" fill="rgba(116,185,255,.05)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="220" y="242" fill="#55efc4" font-size="16" font-weight="800" text-anchor="middle">100% 准确率</text>
+        <text x="220" y="265" fill="#7e7e98" font-size="10" text-anchor="middle">无论 passkey 位于序列的哪个位置，无论序列长度如何</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-blue">多语言：全面超越 Llama 2 70B</h3>
+      <p>Mixtral 在预训练中显著增加了多语言数据的比例。在法语、德语、西班牙语、意大利语的 MMLU 上，Mixtral 比 Llama 2 70B 高出 <strong>6-8 个百分点</strong>。</p>
+      <div class="key key-blue">
+        <strong>多语言 MMLU 平均：</strong><br>
+        · Mixtral: <strong>71.5%</strong>（四语平均）<br>
+        · Llama 2 70B: <strong>64.9%</strong>（四语平均）<br>
+        · 提升: <strong>+6.6%</strong> 绝对值
+      </div>
+      <p><strong>长文本（32K Context）：</strong></p>
+      <p>Mixtral 支持 <strong>32,768 token</strong> 的全密上下文。在 Passkey Retrieval 任务上达到 <strong>100% 准确率</strong> —— 无论 passkey 藏在 32K 序列的任何位置。</p>
+      <p>proof-pile 数据集上的困惑度（PPL）随上下文长度<strong>单调递减</strong>，说明模型真正利用了长距离信息。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 9 路由分析 ══════════════════════ -->
+<div class="section" id="s9">
+  <div class="section-header"><div class="section-num sn-gold">9</div><div class="section-title">路由分析：专家如何分工？</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 360">
+        <text x="220" y="25" fill="#fdcb6e" font-size="13" font-weight="700" text-anchor="middle">专家分配分析（The Pile 数据集）</text>
+
+        <!-- Expert distribution bars for different domains -->
+        <text x="220" y="50" fill="#dddde4" font-size="10" text-anchor="middle">Layer 15 — 各领域的专家分配比例</text>
+
+        <!-- Uniform line -->
+        <line x1="80" y1="65" x2="80" y2="195" stroke="#7e7e98" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="80" y="208" fill="#7e7e98" font-size="7" text-anchor="middle">1/8</text>
+
+        <!-- ArXiv -->
+        <text x="50" y="80" fill="#74b9ff" font-size="8" text-anchor="end">ArXiv</text>
+        <rect x="60" y="72" width="84" height="10" rx="2" fill="rgba(116,185,255,.25)"/>
+        <!-- DM Math -->
+        <text x="50" y="96" fill="#fd79a8" font-size="8" text-anchor="end">DM Math</text>
+        <rect x="60" y="88" width="92" height="10" rx="2" fill="rgba(253,121,168,.25)"/>
+        <!-- Github -->
+        <text x="50" y="112" fill="#55efc4" font-size="8" text-anchor="end">Github</text>
+        <rect x="60" y="104" width="86" height="10" rx="2" fill="rgba(85,239,196,.25)"/>
+        <!-- PubMed -->
+        <text x="50" y="128" fill="#fdcb6e" font-size="8" text-anchor="end">PubMed</text>
+        <rect x="60" y="120" width="82" height="10" rx="2" fill="rgba(253,203,110,.25)"/>
+        <!-- Wikipedia -->
+        <text x="50" y="144" fill="#6c5ce7" font-size="8" text-anchor="end">Wiki</text>
+        <rect x="60" y="136" width="80" height="10" rx="2" fill="rgba(108,92,231,.25)"/>
+        <!-- Philosophy -->
+        <text x="50" y="160" fill="#00cec9" font-size="8" text-anchor="end">Philos</text>
+        <rect x="60" y="152" width="81" height="10" rx="2" fill="rgba(0,206,201,.25)"/>
+
+        <text x="260" y="80" fill="#7e7e98" font-size="9">← 各领域分布高度相似</text>
+        <text x="260" y="96" fill="#fd79a8" font-size="9">← DM Math 略有不同</text>
+        <text x="260" y="140" fill="#7e7e98" font-size="9">（合成数据，覆盖范围有限）</text>
+
+        <!-- Syntactic analysis -->
+        <line x1="40" y1="220" x2="400" y2="220" stroke="#1a1a2a" stroke-width="1"/>
+        <text x="220" y="245" fill="#fdcb6e" font-size="12" font-weight="700" text-anchor="middle">发现：语法模式 > 语义领域</text>
+
+        <!-- Code example -->
+        <rect x="50" y="258" width="340" height="85" rx="8" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+        <text x="70" y="278" fill="#dddde4" font-size="10" font-family="monospace">Python:</text>
+        <text x="70" y="296" fill="#55efc4" font-size="10" font-family="monospace">  ████ self ████ . ████ method ████ ()</text>
+        <text x="70" y="314" fill="#7e7e98" font-size="9">"self" 总是被路由到同一专家</text>
+        <text x="70" y="332" fill="#7e7e98" font-size="9">"缩进 token" 也总是路由到相同专家</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-gold">出乎意料的发现：不按领域分工</h3>
+      <p>论文在 The Pile 的多个子集（ArXiv、Github、PubMed、Wikipedia、Philosophy 等）上分析专家分配比例。</p>
+      <p><strong>意外发现：</strong> 不同领域的专家分配几乎<strong>完全一致</strong>。专家并没有"领域专业化"（比如一个专家管数学，另一个管代码）。</p>
+      <div class="key key-gold">
+        <strong>实际分工模式 —— 句法级别：</strong><br>
+        · Python 中的 <code>self</code> 总是由同一个专家处理<br>
+        · 代码缩进 token 总是路由到相同专家<br>
+        · 英语中 <code>Question</code> 等词跨 token 保持同一专家<br>
+        · 连续 token 经常共享专家（时间局部性）
+      </div>
+      <p><strong>时间局部性量化：</strong> Layer 15 中，连续 token 选到同一个 first-choice 专家的概率约 <strong>28%</strong>（随机基线 12.5%）。如果看 first or second choice，高达 <strong>62-67%</strong>（随机基线 46%）。</p>
+      <p>这意味着专家更多是按<strong>语法/句法角色</strong>分工，而非语义领域。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 10 指令微调 ══════════════════════ -->
+<div class="section" id="s10">
+  <div class="section-header"><div class="section-num sn-purple">10</div><div class="section-title">指令微调：SFT + DPO</div></div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 340">
+        <text x="220" y="25" fill="#6c5ce7" font-size="13" font-weight="700" text-anchor="middle">Mixtral Instruct 训练流水线</text>
+
+        <!-- Base model -->
+        <rect x="140" y="45" width="160" height="35" rx="10" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="220" y="68" fill="#fdcb6e" font-size="11" text-anchor="middle">Mixtral 8×7B Base</text>
+
+        <line x1="220" y1="80" x2="220" y2="105" stroke="#7e7e98" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+        <!-- SFT -->
+        <rect x="120" y="108" width="200" height="55" rx="10" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="1.5"/>
+        <text x="220" y="128" fill="#6c5ce7" font-size="12" font-weight="600" text-anchor="middle">Stage 1: SFT</text>
+        <text x="220" y="145" fill="#7e7e98" font-size="9" text-anchor="middle">Supervised Fine-Tuning</text>
+        <text x="220" y="158" fill="#7e7e98" font-size="9" text-anchor="middle">在指令数据集上监督微调</text>
+
+        <line x1="220" y1="163" x2="220" y2="188" stroke="#7e7e98" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+        <!-- DPO -->
+        <rect x="120" y="191" width="200" height="55" rx="10" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="1.5"/>
+        <text x="220" y="211" fill="#00cec9" font-size="12" font-weight="600" text-anchor="middle">Stage 2: DPO</text>
+        <text x="220" y="228" fill="#7e7e98" font-size="9" text-anchor="middle">Direct Preference Optimization</text>
+        <text x="220" y="241" fill="#7e7e98" font-size="9" text-anchor="middle">在偏好配对数据上对齐</text>
+
+        <line x1="220" y1="246" x2="220" y2="270" stroke="#7e7e98" stroke-width="1.2" marker-end="url(#arr2)"/>
+
+        <!-- Result -->
+        <rect x="110" y="273" width="220" height="50" rx="10" fill="rgba(85,239,196,.08)" stroke="#55efc4" stroke-width="1.5"/>
+        <text x="220" y="293" fill="#55efc4" font-size="12" font-weight="700" text-anchor="middle">Mixtral 8×7B Instruct</text>
+        <text x="220" y="312" fill="#fdcb6e" font-size="11" text-anchor="middle">MT-Bench: 8.30 · Elo: 1121</text>
+
+        <defs><marker id="arr2" viewBox="0 0 6 6" refX="3" refY="3" markerWidth="6" markerHeight="6" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#7e7e98"/></marker></defs>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-purple">两阶段对齐训练</h3>
+      <p><strong>Stage 1 — SFT（监督微调）：</strong> 在高质量指令-回复数据集上进行标准的监督微调，让模型学会遵循指令的格式和风格。</p>
+      <p><strong>Stage 2 — DPO（直接偏好优化）：</strong> 使用人类偏好配对数据（chosen vs rejected），直接优化模型策略，无需单独训练奖励模型。</p>
+      <div class="formula formula-purple">
+        DPO Loss = -log σ(β · (log π(y_w|x) - log π(y_l|x) - log π_ref(y_w|x) + log π_ref(y_l|x)))
+      </div>
+      <div class="key key-purple">
+        <strong>LMSys Arena 排名（2023.12）：</strong><br>
+        · Mixtral Instruct: Elo <strong>1121</strong><br>
+        · Claude-2.1: Elo 1117<br>
+        · GPT-3.5-Turbo: Elo 1117<br>
+        · Gemini Pro: Elo 1111<br>
+        · Llama 2 70B Chat: Elo 1077<br>
+        → 当时 <strong>最强开源模型</strong>，超越所有闭源对手
+      </div>
+    </div>
+  </div>
+
+  <!-- Bias benchmarks -->
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 280">
+        <text x="220" y="25" fill="#74b9ff" font-size="13" font-weight="700" text-anchor="middle">偏见评估</text>
+
+        <!-- BBQ -->
+        <rect x="50" y="50" width="160" height="100" rx="10" fill="rgba(116,185,255,.05)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="130" y="72" fill="#74b9ff" font-size="11" font-weight="600" text-anchor="middle">BBQ 准确率</text>
+        <text x="130" y="100" fill="#7e7e98" font-size="10" text-anchor="middle">Llama 2 70B: 51.5%</text>
+        <text x="130" y="125" fill="#55efc4" font-size="14" font-weight="700" text-anchor="middle">Mixtral: 56.0%</text>
+        <text x="130" y="143" fill="#55efc4" font-size="9" text-anchor="middle">↑ 更少偏见</text>
+
+        <!-- BOLD -->
+        <rect x="230" y="50" width="170" height="100" rx="10" fill="rgba(116,185,255,.05)" stroke="#74b9ff" stroke-width="1"/>
+        <text x="315" y="72" fill="#74b9ff" font-size="11" font-weight="600" text-anchor="middle">BOLD 情感分数</text>
+        <text x="315" y="96" fill="#7e7e98" font-size="9" text-anchor="middle">Gender: 0.323 ± 0.045</text>
+        <text x="315" y="113" fill="#7e7e98" font-size="9" text-anchor="middle">Profession: 0.243 ± 0.087</text>
+        <text x="315" y="130" fill="#7e7e98" font-size="9" text-anchor="middle">Race: 0.232 ± 0.052</text>
+        <text x="315" y="143" fill="#55efc4" font-size="9" text-anchor="middle">↑ 更正面，方差更低</text>
+
+        <!-- Summary -->
+        <rect x="50" y="170" width="350" height="90" rx="10" fill="rgba(85,239,196,.04)" stroke="#55efc4" stroke-width="1"/>
+        <text x="225" y="195" fill="#55efc4" font-size="11" font-weight="600" text-anchor="middle">偏见评估结论</text>
+        <text x="225" y="218" fill="#dddde4" font-size="10" text-anchor="middle">BBQ: Mixtral 偏见更低（准确率更高）</text>
+        <text x="225" y="238" fill="#dddde4" font-size="10" text-anchor="middle">BOLD: Mixtral 更正面情感，更均衡（std 更低）</text>
+        <text x="225" y="255" fill="#7e7e98" font-size="9" text-anchor="middle">覆盖 9 个社会维度：年龄、性别、种族、宗教等</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-blue">偏见评估：优于 Llama 2 70B</h3>
+      <p><strong>BBQ（Bias Benchmark for QA）：</strong> 覆盖 9 个社会维度（年龄、残障、性别认同、国籍、外貌、种族、宗教、社会经济地位、性取向）的偏见测试。Mixtral <strong>56.0%</strong> 准确率 vs Llama 2 70B 的 51.5%，偏见更低。</p>
+      <p><strong>BOLD（Open-Ended Language Generation）：</strong> 测量生成文本的情感倾向。Mixtral 在各维度上情感更正面（均值更高），且方差更低（偏见更均衡）。</p>
+      <div class="key key-blue">
+        <strong>MoE 为何能减少偏见？</strong><br>
+        · 更大的参数容量 → 更丰富的多样化知识<br>
+        · 多专家协作 → 不同视角的信息综合<br>
+        · 多语言数据增强 → 跨文化视角更均衡
+      </div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ 11 总结 ══════════════════════ -->
+<div class="section" id="s11">
+  <div class="section-header"><div class="section-num sn-green">11</div><div class="section-title">核心贡献与影响</div></div>
+
+  <div class="wide-card">
+    <h3 style="color:var(--green);">Mixtral 的五大贡献</h3>
+    <div style="overflow-x:auto;">
+      <table class="cmp-table">
+        <tr><th style="color:var(--green);">贡献</th><th>详情</th><th>影响</th></tr>
+        <tr>
+          <td style="color:var(--gold);">首个开源 SOTA MoE</td>
+          <td>Apache 2.0 许可，47B 总参数，13B 活跃参数</td>
+          <td>证明 MoE 可以在开源社区中实用化</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold);">5× 计算效率</td>
+          <td>用 13B 活跃参数超越 70B 稠密模型</td>
+          <td>大幅降低部署门槛和推理成本</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold);">全层 MoE + Top-2</td>
+          <td>每层都用 MoE（非交替），Top-2 路由</td>
+          <td>验证了全层 MoE 的可行性和优越性</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold);">路由分析洞察</td>
+          <td>专家按句法分工而非语义领域分工</td>
+          <td>为未来 MoE 设计提供了经验指导</td>
+        </tr>
+        <tr>
+          <td style="color:var(--gold);">SFT + DPO 对齐</td>
+          <td>Instruct 版 Elo 1121，超越 GPT-3.5 Turbo</td>
+          <td>证明开源 MoE 可以在对话中匹敌闭源模型</td>
+        </tr>
+      </table>
+    </div>
+  </div>
+
+  <div class="row">
+    <div class="vis">
+      <svg viewBox="0 0 440 300">
+        <text x="220" y="25" fill="#55efc4" font-size="14" font-weight="700" text-anchor="middle">Mixtral 的遗产</text>
+
+        <!-- Impact arrows -->
+        <rect x="140" y="45" width="160" height="35" rx="10" fill="rgba(253,203,110,.1)" stroke="#fdcb6e" stroke-width="1.5"/>
+        <text x="220" y="68" fill="#fdcb6e" font-size="11" font-weight="700" text-anchor="middle">Mixtral 8×7B (2024.01)</text>
+
+        <!-- Arrows -->
+        <line x1="150" y1="80" x2="90" y2="115" stroke="#6c5ce7" stroke-width="1.2"/>
+        <line x1="220" y1="80" x2="220" y2="115" stroke="#00cec9" stroke-width="1.2"/>
+        <line x1="290" y1="80" x2="350" y2="115" stroke="#fd79a8" stroke-width="1.2"/>
+
+        <!-- Downstream -->
+        <rect x="30" y="118" width="120" height="45" rx="8" fill="rgba(108,92,231,.08)" stroke="#6c5ce7" stroke-width="1"/>
+        <text x="90" y="138" fill="#6c5ce7" font-size="10" text-anchor="middle">DeepSeek-MoE</text>
+        <text x="90" y="155" fill="#7e7e98" font-size="8" text-anchor="middle">细粒度专家 + 共享专家</text>
+
+        <rect x="160" y="118" width="120" height="45" rx="8" fill="rgba(0,206,201,.08)" stroke="#00cec9" stroke-width="1"/>
+        <text x="220" y="138" fill="#00cec9" font-size="10" text-anchor="middle">Grok-1</text>
+        <text x="220" y="155" fill="#7e7e98" font-size="8" text-anchor="middle">314B MoE 开源</text>
+
+        <rect x="290" y="118" width="120" height="45" rx="8" fill="rgba(253,121,168,.08)" stroke="#fd79a8" stroke-width="1"/>
+        <text x="350" y="138" fill="#fd79a8" font-size="10" text-anchor="middle">DBRX</text>
+        <text x="350" y="155" fill="#7e7e98" font-size="8" text-anchor="middle">细粒度 MoE</text>
+
+        <!-- More descendants -->
+        <line x1="90" y1="163" x2="90" y2="190" stroke="#6c5ce7" stroke-width="1" stroke-dasharray="3,2"/>
+        <rect x="30" y="193" width="120" height="40" rx="8" fill="rgba(108,92,231,.06)" stroke="#6c5ce7" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="90" y="210" fill="#6c5ce7" font-size="9" text-anchor="middle">DeepSeek-V2/V3</text>
+        <text x="90" y="225" fill="#7e7e98" font-size="7" text-anchor="middle">MoE + MLA 极致效率</text>
+
+        <line x1="220" y1="163" x2="220" y2="190" stroke="#00cec9" stroke-width="1" stroke-dasharray="3,2"/>
+        <rect x="160" y="193" width="120" height="40" rx="8" fill="rgba(0,206,201,.06)" stroke="#00cec9" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="220" y="210" fill="#00cec9" font-size="9" text-anchor="middle">Mixtral 8×22B</text>
+        <text x="220" y="225" fill="#7e7e98" font-size="7" text-anchor="middle">Mistral 后续扩展</text>
+
+        <line x1="350" y1="163" x2="350" y2="190" stroke="#fd79a8" stroke-width="1" stroke-dasharray="3,2"/>
+        <rect x="290" y="193" width="120" height="40" rx="8" fill="rgba(253,121,168,.06)" stroke="#fd79a8" stroke-width="1" stroke-dasharray="3,2"/>
+        <text x="350" y="210" fill="#fd79a8" font-size="9" text-anchor="middle">Qwen-MoE</text>
+        <text x="350" y="225" fill="#7e7e98" font-size="7" text-anchor="middle">通义千问 MoE 版</text>
+
+        <!-- Conclusion -->
+        <rect x="60" y="250" width="320" height="35" rx="8" fill="rgba(85,239,196,.06)" stroke="#55efc4" stroke-width="1"/>
+        <text x="220" y="273" fill="#55efc4" font-size="11" font-weight="600" text-anchor="middle">Mixtral 开启了开源 MoE 大模型的时代</text>
+      </svg>
+    </div>
+    <div class="txt">
+      <h3 class="h-green">开启开源 MoE 时代</h3>
+      <p>Mixtral 不仅仅是一篇论文，它<strong>重新定义了开源大模型的效率标杆</strong>。在它之后，几乎所有主流开源大模型都推出了 MoE 版本。</p>
+      <div class="key key-green">
+        <strong>后续影响：</strong><br>
+        · <strong>DeepSeek-MoE / V2 / V3</strong>: 细粒度专家 + 共享专家，将 MoE 效率进一步提升<br>
+        · <strong>Grok-1</strong> (xAI): 314B MoE 开源，延续 Mixtral 的开源路线<br>
+        · <strong>DBRX</strong> (Databricks): 132B MoE，16 个细粒度专家<br>
+        · <strong>Qwen-MoE</strong>: 阿里通义千问的 MoE 版本<br>
+        · <strong>Mixtral 8×22B</strong>: Mistral 自己的后续扩展
+      </div>
+      <p><strong>核心遗产：</strong> 证明了 "用更多参数 + 稀疏激活" 是大语言模型扩展的<strong>最优路径之一</strong>，在性能和效率之间找到了新的帕累托前沿。</p>
+    </div>
+  </div>
+</div>
+
+<!-- ══════════════════════ Footer ══════════════════════ -->
+<footer>
+  <p>Mixtral of Experts — Albert Q. Jiang et al. · Mistral AI · 2024</p>
+  <p>arXiv: <a href="https://arxiv.org/abs/2401.04088" target="_blank">2401.04088</a> ·
+     Code: <a href="https://github.com/mistralai/mistral-src" target="_blank">mistral-src</a> ·
+     License: Apache 2.0</p>
+</footer>
+
+<!-- ═══ JS: Scroll Reveal ═══ -->
+<script>
+const io = new IntersectionObserver((entries) => {
+  entries.forEach(e => { if (e.isIntersecting) { e.target.classList.add('visible'); io.unobserve(e.target); } });
+}, { threshold: 0.12 });
+document.querySelectorAll('.row, .wide-card').forEach(el => io.observe(el));
+</script>
+</body>
+</html>
